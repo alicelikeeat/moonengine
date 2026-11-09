@@ -588,6 +588,7 @@ Result<void> VulkanRenderer::create_pipeline() {
                 stages[0].module = grid_vert;
                 stages[1].module = grid_frag;
                 raster.cullMode = VK_CULL_MODE_NONE;
+                vertex_input.vertexAttributeDescriptionCount = 2;  // the grid has no UVs
                 depth.depthWriteEnable = VK_FALSE;
                 depth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
                 blend_attachment.blendEnable = VK_TRUE;
