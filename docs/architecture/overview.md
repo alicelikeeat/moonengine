@@ -9,7 +9,7 @@ Dependencies only point **down** the layers. The rule is enforced at configure t
 | Layer | System | Directory | Responsibility | Status |
 | --- | --- | --- | --- | --- |
 | 0 | Foundation | `engine/foundation` | Memory, threads, jobs, logging, tracing, time, lifecycle, platform | **Implemented (core subset)** |
-| 1 | World | `engine/world` | ECS, scenes, streaming, stable IDs | Planned (M1) |
+| 1 | World | `engine/world` | ECS, scenes, streaming, stable IDs | **Implemented (ECS core)** |
 | 1 | Assets | `engine/assets` | Import, conversion, caching, dependency graph | Planned (M2) |
 | 2 | Render | `engine/render` | RHI, render graph, materials, lighting | Planned (M1) |
 | 2 | Simulation | `engine/simulation` | Physics, collision, fixed step, replay | Planned (M4) |
@@ -39,8 +39,13 @@ Rules:
 | Tracing | `trace.hpp` | Chrome Trace Event JSON (open in Perfetto) |
 | Time | `time.hpp` | Stopwatch; integer-nanosecond fixed timestep |
 | Lifecycle | `lifecycle.hpp` | Init / run / pause / device lost / shutdown state machine |
+| UUID | `uuid.hpp` | v4 UUIDs for persistent identity of entities, scenes, assets |
 
 Not yet in Foundation (tracked in [ROADMAP.md](../../ROADMAP.md)): async file I/O, resource handles, crash dumps, and a lock-free work-stealing deque.
+
+## World today
+
+Archetype ECS ([ADR 0007](../adr/0007-archetype-ecs.md)): generational `Entity` handles, UUID identity, named components, `each`/`par_each` queries, `CommandBuffer`, and a `Schedule` that runs non-conflicting systems in parallel. Details in [`engine/world/MODULE.md`](../../engine/world/MODULE.md).
 
 ## Verification
 
