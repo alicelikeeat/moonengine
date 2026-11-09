@@ -50,3 +50,8 @@ if(AETHER_BUILD_SAMPLES)
     target_link_libraries(aether_imgui_glfw PUBLIC aether_imgui glfw)
     target_compile_definitions(aether_imgui_glfw PRIVATE GLFW_INCLUDE_NONE)
 endif()
+
+# stb_image (MIT or public domain): PNG/JPEG decoding for imported assets.
+add_library(aether_stb_image STATIC stb/stb_image_impl.c)
+target_include_directories(aether_stb_image SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/stb)
+target_compile_definitions(aether_stb_image PUBLIC STBI_ONLY_PNG STBI_ONLY_JPEG STBI_NO_STDIO STBI_NO_LINEAR STBI_MAX_DIMENSIONS=16384)
