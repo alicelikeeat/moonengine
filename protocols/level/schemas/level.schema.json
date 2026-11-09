@@ -50,8 +50,9 @@
             "MeshInstance": {
               "type": "object",
               "properties": {
-                "mesh": { "type": "string", "description": "Mesh name, e.g. builtin:cube." },
-                "color": { "$ref": "#/$defs/vec3", "description": "Linear RGB." }
+                "mesh": { "type": "string", "description": "Mesh name: builtin:cube or asset:<content path>#mesh<m>.<p>." },
+                "color": { "$ref": "#/$defs/vec3", "description": "Linear RGB, multiplied with the texture." },
+                "texture": { "type": "string", "description": "Base colour texture: builtin:white (default when absent) or asset:<content path>#texture<t>." }
               },
               "additionalProperties": false
             },

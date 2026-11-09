@@ -42,15 +42,17 @@ Render
 - [x] Windowed sample (`samples/spinning_cubes`), Windows build published by CI
 - [x] Release workflow: tagged builds published to GitHub Releases with checksums (v0.1.0)
 - [ ] Device-local memory with staging uploads; memory allocator
-- [ ] Render graph; forward+ clustered PBR; materials and textures; shadows
+- [ ] Render graph; forward+ clustered PBR; full materials; shadows
 
 ## M2 — Editable 3D scenes · 🚧 Started
 
 - [x] Editor shell: docking layout, viewport with gizmos and picking, outliner, details, place actors, log, stats (v0.2.0)
 - [x] Undo/redo, duplicate, drag-and-drop attach, play-in-editor
 - [x] Scene save/load: documented JSON level format v1 with schema, migrations, unknown-data preservation (v0.3.0)
-- [ ] glTF 2.0 import, content-hashed asset database, content browser
-- [ ] Materials and textures; reflection-driven inspectors; multi-selection
+- [x] glTF 2.0 import (meshes, node hierarchy, base colour + PNG/JPEG textures), content browser with drag-and-drop placement (v0.4.0)
+- [x] Textured meshes with mipmaps; levels reference models by content path and load them on demand (v0.4.0)
+- [ ] Content-hashed asset database with stable asset IDs and import cache; thumbnails
+- [ ] PBR materials (metallic-roughness, normal maps); reflection-driven inspectors; multi-selection
 
 ## M3 — AI-native workflow
 ACP server over stdio and loopback WebSocket; scene query, transactional edits, rollback; model provider interface with a no-AI mode and a local open-weights provider; agent roles (planner, implementer, reviewer, tester) with budget and audit logs.
