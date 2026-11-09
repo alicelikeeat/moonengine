@@ -16,6 +16,7 @@
 | `JobSystem::submit`, `wait`, `parallel_for` | Yes, from any thread including inside jobs |
 | `Logger`, `MemorySink`, `TraceCollector` | Yes |
 | `FixedTimestep`, `Lifecycle` | No |
+| `Uuid` | Value type; `generate` needs exclusive access to its RNG |
 
 ## Contracts
 

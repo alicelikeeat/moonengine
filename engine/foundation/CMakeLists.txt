@@ -10,6 +10,7 @@ aether_add_module(foundation
         src/text.cpp
         src/time.cpp
         src/trace.cpp
+        src/uuid.cpp
     LINK
         Threads::Threads)
 
@@ -22,6 +23,7 @@ if(AETHER_BUILD_TESTS)
             tests/test_memory.cpp
             tests/test_result.cpp
             tests/test_time.cpp
+            tests/test_uuid.cpp
         LINK
             Aether::foundation)
 endif()
