@@ -4,7 +4,12 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-09
+
+First preview release. Windows demo binary published on GitHub Releases.
+
 ### Added
+- Release workflow: pushing a `vX.Y.Z` tag builds, tests and publishes a GitHub Release with the Windows demo, SHA-256 checksums and the dependency manifest (`docs/releasing.md`).
 - Render module: backend-neutral `Renderer` with a Vulkan 1.3 backend (dynamic rendering, synchronization2, swapchain with resize/minimise handling, depth buffer, validation-layer support) and a headless mode with pixel readback. Camera/projection math and cube mesh. 8 tests, including GPU tests that check rendered pixels. ADR 0009.
 - `samples/spinning_cubes`: windowed demo combining ECS, systems, scene hierarchy and rendering. CI publishes a Windows build as an artifact and smoke-tests the Linux build under a virtual display.
 - Vendored dependencies: Vulkan-Headers 1.4.304, volk 1.4.304, GLFW 3.4 (samples only), pinned in `third_party/dependencies.json`.

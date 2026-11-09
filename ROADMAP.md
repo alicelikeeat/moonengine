@@ -40,6 +40,7 @@ Render
 - [x] Backend-neutral `Renderer` interface; Vulkan 1.3 backend (dynamic rendering, swapchain, depth, resize)
 - [x] Headless rendering with pixel readback; GPU tests on software Vulkan in CI
 - [x] Windowed sample (`samples/spinning_cubes`), Windows build published by CI
+- [x] Release workflow: tagged builds published to GitHub Releases with checksums (v0.1.0)
 - [ ] Device-local memory with staging uploads; memory allocator
 - [ ] Render graph; forward+ clustered PBR; materials and textures; shadows
 

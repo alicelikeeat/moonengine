@@ -29,6 +29,10 @@ There is a first renderer and a demo program, but no editor yet. Claims about pe
 4. AI agents use the same public protocol ([ACP](protocols/acp/README.md)) as any script, with permissions, transactions, rollback and an audit log.
 5. Results over claims: nothing is "done" until it builds, passes tests and can be reproduced by someone else.
 
+## Download
+
+The latest preview build of the Windows demo is on the [Releases page](https://github.com/alicelikeeat/moonengine/releases). It needs a Vulkan 1.3 GPU driver.
+
 ## Quick start
 
 ```bash
