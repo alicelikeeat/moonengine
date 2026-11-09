@@ -7,8 +7,11 @@
 #include <string>
 #include <vector>
 
+#include "aether/render/model_library.hpp"
 #include "aether/render/renderer.hpp"
 #include "aether/world/hierarchy.hpp"
+#include "aether/world/name.hpp"
+#include "aether/world/serialization.hpp"
 #include "aether_test.hpp"
 
 using namespace aether;
@@ -249,4 +252,123 @@ AETHER_TEST(headless_grid_draws_on_the_ground_plane_only) {
     CHECK(below > 100);
     CHECK_EQ(above, 0);
     CHECK_EQ(rig->renderer->validation_errors(), 0u);
+}
+
+AETHER_TEST(headless_texture_multiplies_base_color) {
+    auto rig = make_rig();
+    // 2x1 texture: left half red, right half blue, sRGB-encoded. The cube's
+    // front face maps u 0..1 left to right, so the halves show side by side.
+    TextureData tex{2, 1, {255, 0, 0, 255, 0, 0, 255, 255}};
+    auto id = rig->renderer->upload_texture(tex);
+    REQUIRE(id.has_value());
+    CHECK(id.value() != kWhiteTexture);
+    CHECK(!rig->renderer->upload_texture(TextureData{0, 0, {}}));
+    CHECK(!rig->renderer->upload_texture(TextureData{2, 2, {1, 2, 3}}));
+
+    World w({.seed = 1});
+    const Entity e = spawn_cube(w, rig->cube, {0, 0, 0}, {1, 1, 1});
+    w.get<MeshInstance>(e)->texture = id.value();
+    propagate_transforms(w);
+    Camera cam;
+    cam.position = {0, 0, 3};
+    REQUIRE(rig->renderer->render(w, cam).has_value());
+    auto px = rig->renderer->read_pixels();
+    REQUIRE(px.has_value());
+    const Rgb left = pixel(px.value(), 64, 26, 32);
+    const Rgb right = pixel(px.value(), 64, 38, 32);
+    std::printf("    left = (%d, %d, %d), right = (%d, %d, %d)\n", left.r, left.g, left.b, right.r, right.g, right.b);
+    CHECK(left.r > 150 && left.g < 20 && left.b < 20);
+    CHECK(right.b > 150 && right.r < 20 && right.g < 20);
+    CHECK_EQ(rig->renderer->validation_errors(), 0u);
+}
+
+AETHER_TEST(headless_model_library_loads_spawns_and_renders_sample_models) {
+    auto rig = make_rig();
+    auto lib = ModelLibrary::create(*rig->renderer, AETHER_SAMPLE_CONTENT, &rig->logger);
+    REQUIRE(lib.has_value());
+    auto& library = *lib.value();
+    const auto models = library.list_models();
+    REQUIRE(models.size() == 3u);
+    CHECK_EQ(models[0], std::string("models/crate.glb"));
+    CHECK_EQ(models[2], std::string("models/tree/tree.gltf"));
+
+    for (const auto& path : models) {
+        auto m = library.load(path);
+        if (!m) std::fprintf(stderr, "    %s: %s\n", path.c_str(), m.error().message.c_str());
+        REQUIRE(m.has_value());
+        CHECK(m.value()->triangles > 0u);
+        CHECK(m.value()->warnings.empty());
+    }
+    // Cached by normalised path; escaping the content root is refused.
+    CHECK(library.load("models/./x/../crate.glb").value() == library.load("models\\crate.glb").value());
+    CHECK(!library.load("../README.md"));
+    CHECK(!library.load("/etc/passwd"));
+    CHECK(!library.load("models/missing.glb"));
+
+    // The tree: root "tree" > "Tree" (trunk) > "Canopy" with two primitives
+    // (two materials) as children.
+    World w({.seed = 1});
+    auto tree = library.spawn(w, "models/tree/tree.gltf", {0, 0, 0});
+    REQUIRE(tree.has_value());
+    CHECK_EQ(w.get<Name>(tree.value())->value, std::string("tree"));
+    int named = 0, drawn = 0;
+    w.each<Name>([&](Entity, Name&) { ++named; });
+    w.each<MeshInstance>([&](Entity, MeshInstance&) { ++drawn; });
+    CHECK_EQ(named, 5);  // tree, Tree, Canopy, Canopy [0], Canopy [1]
+    CHECK_EQ(drawn, 3);
+
+    // The crate is textured; it renders brown-ish wood, not white.
+    World cw({.seed = 1});
+    auto crate = library.spawn(cw, "models/crate.glb", {0, -0.5f, 0});
+    REQUIRE(crate.has_value());
+    propagate_transforms(cw);
+    Camera cam;
+    cam.position = {0, 0, 3};
+    auto stats = rig->renderer->render(cw, cam);
+    REQUIRE(stats.has_value());
+    CHECK_EQ(stats.value().draws, 1u);
+    auto px = rig->renderer->read_pixels();
+    REQUIRE(px.has_value());
+    const Rgb c = pixel(px.value(), 64, 32, 40);
+    std::printf("    crate pixel = (%d, %d, %d)\n", c.r, c.g, c.b);
+    CHECK(c.r > c.g && c.g > c.b);
+    CHECK(c.r > 30);  // sRGB texels are linearised; the target stores linear values
+    // Bounds feed picking: the crate is a unit box.
+    MeshId crate_mesh = 0;
+    cw.each<MeshInstance>([&](Entity, MeshInstance& m) { crate_mesh = m.mesh; });
+    CHECK(crate_mesh != library.cube());
+    CHECK(std::abs(library.bounds()[crate_mesh].max.x - 0.5f) < 1e-5f);
+    CHECK_EQ(rig->renderer->validation_errors(), 0u);
+}
+
+AETHER_TEST(headless_level_with_models_loads_them_on_demand) {
+    auto rig = make_rig();
+    Json doc;
+    {
+        auto lib = ModelLibrary::create(*rig->renderer, AETHER_SAMPLE_CONTENT);
+        REQUIRE(lib.has_value());
+        World w({.seed = 1});
+        REQUIRE(lib.value()->spawn(w, "models/torus.glb", {0, 0, 0}).has_value());
+        world::SerializerRegistry reg;
+        world::register_core_components(reg);
+        register_components(reg, lib.value()->names());
+        doc = world::save_level(w, reg);
+    }
+    const std::string text = to_json_string(doc);
+    CHECK(text.find("asset:models/torus.glb#mesh0.0") != std::string::npos);
+    CHECK(text.find("asset:models/torus.glb#texture0") != std::string::npos);
+
+    // A new library has never seen the torus; loading the level imports it.
+    auto lib = ModelLibrary::create(*rig->renderer, AETHER_SAMPLE_CONTENT);
+    REQUIRE(lib.has_value());
+    world::SerializerRegistry reg;
+    world::register_core_components(reg);
+    register_components(reg, lib.value()->names());
+    World w({.seed = 2});
+    auto loaded = world::load_level(doc, w, reg);
+    REQUIRE(loaded.has_value());
+    CHECK(loaded.value().warnings.empty());
+    int textured = 0;
+    w.each<MeshInstance>([&](Entity, MeshInstance& m) { textured += m.texture != kWhiteTexture ? 1 : 0; });
+    CHECK_EQ(textured, 1);
 }

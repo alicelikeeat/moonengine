@@ -14,6 +14,7 @@ Opens with a demo level (a small solar system). Panels can be dragged, docked an
 | Outliner | Scene tree. Click to select, drag onto another item to attach, drag to empty space to detach, right-click for actions, search box filters by name |
 | Details | Name, Location / Rotation / Scale, mesh colour, Spin settings, add/remove components |
 | Place Actors | Add a Cube, Spinning Cube or Empty actor at the view focus |
+| Content Browser | 3D models (`.gltf`, `.glb`) in the `Content` folder. Double-click to add one at the view focus, or drag it into the Viewport to place it on the ground |
 | Output Log | Engine and editor messages, filterable |
 | Stats | Frame time graph, GPU, draw calls, entity counts |
 
@@ -41,9 +42,15 @@ Toolbar: **Play / Pause / Stop** (simulation; Stop restores the level), **Move /
 
 Layout is saved to `aether_editor.ini` next to where the editor was started.
 
+### Your own models
+
+Copy `.gltf` or `.glb` files (with their `.bin` and texture files) anywhere under `Content\` next to the editor and press **Refresh** in the Content Browser. Supported: meshes, node hierarchy, base colour and PNG/JPEG base colour textures. Not yet: animations, skinning, normal/roughness maps (they are skipped with a note in the Output Log). Use `--content D:\MyModels` to browse another folder.
+
+Levels store the model's path inside the content folder, so keep levels and the `Content` folder together when you share them. `levels/model_garden.alevel` uses the sample models.
+
 ## aether_spinning_cubes.exe — runtime demo
 
-The same solar system running as a game would, with no editor. Esc quits. Run any level saved by the editor with `--level path\to\level.alevel`. Other options: `--validation`, `--no-vsync`, `--frames N`.
+The same solar system running as a game would, with no editor. Esc quits. Run any level saved by the editor with `--level path\to\level.alevel` (models load from `Content\`, or `--content DIR`). Other options: `--validation`, `--no-vsync`, `--frames N`.
 
 ## Licence
 

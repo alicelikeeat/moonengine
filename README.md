@@ -12,14 +12,15 @@ This is a young project. Here is exactly what exists today and what does not.
 | --- | --- |
 | Governance, licence, contribution process (DCO) | ✅ Done |
 | CMake build, presets, CI (GCC, Clang, MSVC, ASan/UBSan, TSan) | ✅ Done |
-| Foundation: allocators, work-stealing jobs, logging, tracing, time, lifecycle, UUIDs, math | ✅ Implemented and tested (41 tests) |
-| World: archetype ECS, queries, command buffers, parallel system schedule, scene hierarchy, transforms | ✅ Implemented and tested (30 tests) |
+| Foundation: allocators, work-stealing jobs, logging, tracing, time, lifecycle, UUIDs, math, JSON | ✅ Implemented and tested (51 tests) |
+| World: archetype ECS, queries, command buffers, parallel system schedule, scene hierarchy, transforms, level files | ✅ Implemented and tested (38 tests) |
 | Aether Control Protocol (ACP) for tools and AI agents | 📝 Draft 0.1 schemas + validator |
-| Render: Vulkan 1.3 renderer, windowed and headless | ✅ First slice, tested on software Vulkan (8 tests) |
-| Editor: viewport + gizmos, outliner, details, undo/redo, play-in-editor, save/open levels | ✅ Usable preview (15 tests) |
+| Assets: glTF 2.0 import (meshes, hierarchy, base colour, PNG/JPEG textures), fuzz-tested | ✅ First slice (7 tests) |
+| Render: Vulkan 1.3 renderer, windowed and headless, textures, model library | ✅ First slice, tested on software Vulkan (17 tests) |
+| Editor: viewport + gizmos, outliner, details, content browser, undo/redo, play-in-editor, save/open levels | ✅ Usable preview (15 tests) |
 | Level files: documented JSON format v1 with schema and migrations | ✅ Done |
 | Sample app: `samples/spinning_cubes` | ✅ Runs; needs a Vulkan 1.3 GPU driver |
-| Scene save format, materials, Assets, Physics, Animation, AI agents | ⏳ Not started — see [ROADMAP.md](ROADMAP.md) |
+| PBR materials, asset database, Physics, Animation, AI agents | ⏳ Not started — see [ROADMAP.md](ROADMAP.md) |
 
 There is a first renderer, a level editor that saves and opens levels, and a runtime that plays them. Claims about performance versus other engines will only be made with published, reproducible benchmarks.
 
@@ -55,15 +56,16 @@ Full instructions: [docs/building.md](docs/building.md).
 | --- | --- |
 | `engine/foundation` | Core runtime: memory, jobs, logging, tracing, time, lifecycle, UUIDs |
 | `engine/world` | Entity component system: entities, components, queries, systems |
-| `engine/render` | Renderer interface and Vulkan backend |
+| `engine/assets` | Importers (glTF 2.0, images) |
+| `engine/render` | Renderer interface, Vulkan backend, model library |
 | `editor` | Level editor (`aether_editor`) |
 | `engine/gameplay` | Gameplay components and systems |
-| `samples` | Runnable demo programs |
+| `samples` | Runnable demo programs, sample levels and models (`samples/content`) |
 | `protocols/acp` | Aether Control Protocol schemas, examples and spec |
 | `tests/support` | Dependency-free unit test harness |
 | `benchmarks` | Micro-benchmarks (JSON output) |
 | `docs` | Architecture, ADRs, RFCs, build guide |
-| `tools` | Protocol validator, DCO checker |
+| `tools` | Protocol validator, DCO checker, shader compiler, sample content generator |
 | `third_party` | Dependency manifest and licence records |
 
 Directories for Intelligence and the other systems are added when they have working code and tests, not before. The planned layout is in [docs/architecture/overview.md](docs/architecture/overview.md).

@@ -73,6 +73,8 @@ public:
     virtual ~Renderer() = default;
 
     virtual Result<MeshId> upload_mesh(const MeshData& mesh) = 0;
+    // Uploads RGBA8 pixels and builds mipmaps on the GPU.
+    virtual Result<TextureId> upload_texture(const TextureData& texture) = 0;
 
     // Call when the window size changes; takes effect on the next frame.
     virtual void resize(std::uint32_t width, std::uint32_t height) = 0;

@@ -23,7 +23,10 @@ namespace aether::editor {
 
 class EditorApp {
 public:
-    EditorApp(render::Renderer& renderer, Logger& logger, std::shared_ptr<MemorySink> log);
+    // `content_root` is the folder the Content Browser lists (.gltf/.glb).
+    // Throws std::runtime_error if the builtin meshes cannot be uploaded.
+    EditorApp(render::Renderer& renderer, Logger& logger, std::shared_ptr<MemorySink> log,
+              std::filesystem::path content_root = {});
     ~EditorApp();
 
     EditorApp(const EditorApp&) = delete;

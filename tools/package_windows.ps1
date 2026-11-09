@@ -4,7 +4,7 @@
 #   pwsh tools/package_windows.ps1 -Version v0.1.0 -OutDir dist
 #
 # Produces in OutDir:
-#   aether-engine-<Version>-windows-x64.zip   editor + demo exe, LICENSE, NOTICE, licences, README, BUILD_INFO
+#   aether-engine-<Version>-windows-x64.zip   editor + demo exe, levels, Content, LICENSE, NOTICE, licences, README, BUILD_INFO
 #   aether-engine-<Version>-dependencies.json dependency manifest (minimal SBOM)
 #   SHA256SUMS.txt                            checksums of the files above
 param(
@@ -26,6 +26,8 @@ Copy-Item third_party/licenses/* (Join-Path $stage "licenses")
 Copy-Item docs/user/quick-start.md (Join-Path $stage "README.md")
 New-Item -ItemType Directory -Force -Path (Join-Path $stage "levels") | Out-Null
 Copy-Item samples/levels/*.alevel (Join-Path $stage "levels")
+# Sample models: the editor's Content Browser and the demo find "Content" next to the exe.
+Copy-Item -Recurse samples/content (Join-Path $stage "Content")
 $info = @(
     "version: $Version"
     "commit: $env:GITHUB_SHA"

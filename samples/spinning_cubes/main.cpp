@@ -5,8 +5,10 @@
 // orbit the sun, purely through parent transforms), a fixed simulation
 // timestep, and the Vulkan renderer presenting to a GLFW window.
 //
-// Usage: aether_spinning_cubes [--level file.alevel] [--frames N] [--validation] [--no-vsync]
+// Usage: aether_spinning_cubes [--level file.alevel] [--content DIR] [--frames N] [--validation] [--no-vsync]
 //   --level F      run a level saved by the editor instead of the built-in scene
+//   --content DIR  folder with the models the level uses (default: ./Content,
+//                  else Content next to the executable)
 //   --frames N     exit after N frames (used by CI smoke tests)
 //   --validation   enable Khronos validation if installed
 //   --no-vsync     present as fast as possible
@@ -32,6 +34,7 @@
 #include "aether/world/serialization.hpp"
 #include "aether/gameplay/spin.hpp"
 #include "aether/render/mesh_registry.hpp"
+#include "aether/render/model_library.hpp"
 
 using namespace aether;
 using namespace aether::math;
@@ -43,6 +46,7 @@ using gameplay::Spin;
 
 struct Options {
     std::string level;  // level file to run instead of the built-in scene
+    std::string content;
     long frames = -1;   // -1: run until closed
     bool validation = false;
     bool vsync = true;
@@ -54,6 +58,7 @@ Options parse(int argc, char** argv) {
         const std::string_view a = argv[i];
         if (a == "--frames" && i + 1 < argc) o.frames = std::strtol(argv[++i], nullptr, 10);
         else if (a == "--level" && i + 1 < argc) o.level = argv[++i];
+        else if (a == "--content" && i + 1 < argc) o.content = argv[++i];
         else if (a == "--validation") o.validation = true;
         else if (a == "--no-vsync") o.vsync = false;
         else std::cerr << "ignoring unknown argument: " << a << "\n";
@@ -157,20 +162,20 @@ int main(int argc, char** argv) {
         });
 
         World world;
-        const auto cube = renderer->upload_mesh(render::make_cube());
-        if (!cube) {
-            std::fprintf(stderr, "%s\n", cube.error().message.c_str());
+        // Models a level refers to are imported from the content folder on demand.
+        auto library = render::ModelLibrary::create(
+            *renderer, render::find_content_root(opt.content, argc > 0 ? argv[0] : nullptr), &logger);
+        if (!library) {
+            std::fprintf(stderr, "%s\n", library.error().message.c_str());
             return 1;
         }
         if (opt.level.empty()) {
-            build_scene(world, cube.value());
+            build_scene(world, library.value()->cube());
         } else {
             // Run a level made in the editor: same components, same file format.
-            render::MeshRegistry meshes;
-            meshes.add(std::string(render::kBuiltinCube), cube.value());
             SerializerRegistry registry;
             register_core_components(registry);
-            render::register_components(registry, meshes);
+            render::register_components(registry, library.value()->names());
             gameplay::register_components(registry);
             auto report = load_level_file(opt.level, world, registry);
             if (!report) {

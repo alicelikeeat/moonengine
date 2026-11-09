@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <optional>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -26,6 +27,7 @@
 #include "aether/world/serialization.hpp"
 #include "aether/gameplay/spin.hpp"
 #include "aether/render/mesh_registry.hpp"
+#include "aether/render/model_library.hpp"
 
 namespace aether::editor {
 
@@ -45,8 +47,10 @@ constexpr const char* kDetails = "Details";
 constexpr const char* kPlace = "Place Actors";
 constexpr const char* kLog = "Output Log";
 constexpr const char* kStats = "Stats";
+constexpr const char* kContent = "Content Browser";
+constexpr const char* kAssetDrag = "AETHER_ASSET";
 constexpr const char* kOutlinerDrag = "AETHER_ENTITY";
-constexpr const char* kGenerator = "Aether Editor 0.3.0";
+constexpr const char* kGenerator = "Aether Editor 0.4.0";
 
 namespace fs = std::filesystem;
 
@@ -94,9 +98,8 @@ struct EditorApp::Impl {
 
     std::unique_ptr<world::World> world;
     Schedule schedule;
+    std::unique_ptr<render::ModelLibrary> library;
     render::MeshId cube = 0;
-    std::vector<render::Aabb> mesh_bounds;
-    render::MeshRegistry meshes;
     world::SerializerRegistry registry;
 
     // Level file state.
@@ -137,6 +140,14 @@ struct EditorApp::Impl {
     bool show_grid = true;
 
     bool show_outliner = true, show_details = true, show_place = true, show_log = true, show_stats = true;
+    bool show_content = true;
+
+    // Content browser.
+    std::vector<std::string> content_models;
+    bool content_scanned = false;
+    std::string content_selected;
+    int focus_content = 0;  // frames until the tab is brought to the front (after a layout reset)
+    ImGuiTextFilter content_filter;
     bool show_demo = false, show_about = false, show_controls = false;
     bool reset_layout = false;
     bool quit = false;
@@ -151,14 +162,14 @@ struct EditorApp::Impl {
     // Viewport rect (screen space) and camera matrices of the last frame.
     ImVec2 vp_min{0, 0}, vp_size{1, 1};
 
-    Impl(render::Renderer& r, Logger& l, std::shared_ptr<MemorySink> s) : renderer(r), logger(l), log(std::move(s)) {
-        auto mesh = render::make_cube(1.0f);
-        auto id = renderer.upload_mesh(mesh);
-        if (id) cube = id.value();
-        mesh_bounds.resize(cube + 1);
-        mesh_bounds[cube] = render::compute_bounds(mesh);
-        meshes.add(std::string(render::kBuiltinCube), cube);
-        register_level_components(registry, meshes);
+    Impl(render::Renderer& r, Logger& l, std::shared_ptr<MemorySink> s, fs::path content_root)
+        : renderer(r), logger(l), log(std::move(s)) {
+        auto lib = render::ModelLibrary::create(renderer, std::move(content_root), &logger);
+        if (!lib) throw std::runtime_error("cannot upload the builtin meshes: " + lib.error().message);
+        library = std::move(lib).value();
+        cube = library->cube();
+        register_level_components(registry, library->names());
+        AETHER_LOG(logger, LogLevel::Info, "editor", "content folder: {}", to_utf8(library->content_root()));
         std::error_code ec;
         dialog_dir = fs::current_path(ec);
     }
@@ -482,6 +493,34 @@ struct EditorApp::Impl {
         return e;
     }
 
+    // Instantiates a content model with its node hierarchy as one undo step.
+    void spawn_model(const std::string& path, Vec3 position) {
+        if (!can_record()) {
+            show_error("Cannot add model", "Stop the simulation before editing the level.");
+            return;
+        }
+        auto root = library->spawn(*world, path, position);
+        if (!root) {
+            show_error("Cannot add model", root.error().message);
+            return;
+        }
+        world::propagate_transforms(*world);
+        record(make_create_command("Add " + display_name(*world, root.value()), capture_subtree(*world, root.value())));
+        select(root.value());
+    }
+
+    // Where a ray from the viewport hits the ground plane (y = 0); the view
+    // focus when it points at the sky.
+    Vec3 ground_point(float nx, float ny) const {
+        const render::Camera rc = cam.to_render_camera();
+        const Ray ray = screen_ray(render::view_projection(rc, vp_size.x / vp_size.y), nx, ny);
+        if (std::abs(ray.direction.y) > 1e-6f) {
+            const float t = -ray.origin.y / ray.direction.y;
+            if (t > 0 && t < 1e4f) return ray.origin + ray.direction * t;
+        }
+        return cam.focus;
+    }
+
     void delete_selected() {
         const world::Entity e = selection();
         if (e.is_null()) return;
@@ -610,11 +649,13 @@ struct EditorApp::Impl {
             ImGui::DockBuilderGetNode(dock)->IsLeafNode()) {
             build_default_layout(dock, main->WorkSize);
             reset_layout = false;
+            focus_content = 3;
         }
         viewport_panel();
         if (show_outliner) outliner_panel();
         if (show_details) details_panel();
         if (show_place) place_panel();
+        if (show_content) content_panel();
         if (show_log) log_panel();
         if (show_stats) stats_panel();
         if (show_demo) ImGui::ShowDemoWindow(&show_demo);
@@ -636,6 +677,7 @@ struct EditorApp::Impl {
         ImGui::DockBuilderDockWindow(kOutliner, right_top);
         ImGui::DockBuilderDockWindow(kDetails, right_bottom);
         ImGui::DockBuilderDockWindow(kPlace, left);
+        ImGui::DockBuilderDockWindow(kContent, bottom);
         ImGui::DockBuilderDockWindow(kLog, bottom);
         ImGui::DockBuilderDockWindow(kStats, bottom);
         ImGui::DockBuilderFinish(dock);
@@ -680,11 +722,12 @@ struct EditorApp::Impl {
             ImGui::MenuItem(kOutliner, nullptr, &show_outliner);
             ImGui::MenuItem(kDetails, nullptr, &show_details);
             ImGui::MenuItem(kPlace, nullptr, &show_place);
+            ImGui::MenuItem(kContent, nullptr, &show_content);
             ImGui::MenuItem(kLog, nullptr, &show_log);
             ImGui::MenuItem(kStats, nullptr, &show_stats);
             ImGui::Separator();
             if (ImGui::MenuItem("Reset Layout")) {
-                show_outliner = show_details = show_place = show_log = show_stats = true;
+                show_outliner = show_details = show_place = show_log = show_stats = show_content = true;
                 reset_layout = true;
             }
             ImGui::MenuItem("ImGui Demo (developer)", nullptr, &show_demo);
@@ -840,6 +883,15 @@ struct EditorApp::Impl {
         vp_size = size;
         ImGui::Image(static_cast<ImTextureID>(renderer.viewport_texture()), size);
         const bool hovered = ImGui::IsItemHovered();
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(kAssetDrag)) {
+                const std::string path(static_cast<const char*>(payload->Data), static_cast<std::size_t>(payload->DataSize));
+                const ImVec2 mouse = ImGui::GetIO().MousePos;
+                spawn_model(path, ground_point(2.0f * (mouse.x - vp_min.x) / size.x - 1.0f,
+                                               2.0f * (mouse.y - vp_min.y) / size.y - 1.0f));
+            }
+            ImGui::EndDragDropTarget();
+        }
 
         const float aspect = size.x / size.y;
         const render::Camera rc = cam.to_render_camera();
@@ -881,7 +933,7 @@ struct EditorApp::Impl {
             const float nx = 2.0f * (io.MousePos.x - vp_min.x) / size.x - 1.0f;
             const float ny = 2.0f * (io.MousePos.y - vp_min.y) / size.y - 1.0f;
             const Mat4 vp = render::view_projection(rc, aspect);
-            select(pick(*world, screen_ray(vp, nx, ny), mesh_bounds).entity);
+            select(pick(*world, screen_ray(vp, nx, ny), library->bounds()).entity);
         }
 
         // Overlay: view label, selection, frame rate.
@@ -1184,7 +1236,13 @@ struct EditorApp::Impl {
                 ImGui::AlignTextToFramePadding();
                 ImGui::Text("Mesh");
                 ImGui::SameLine(80);
-                ImGui::TextDisabled("Cube");
+                ImGui::TextDisabled("%s", asset_label(library->names().name_of(m.mesh)).c_str());
+                if (m.texture != render::kWhiteTexture) {
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::Text("Texture");
+                    ImGui::SameLine(80);
+                    ImGui::TextDisabled("%s", asset_label(library->names().texture_name_of(m.texture)).c_str());
+                }
                 ImGui::AlignTextToFramePadding();
                 ImGui::Text("Color");
                 ImGui::SameLine(80);
@@ -1291,6 +1349,95 @@ struct EditorApp::Impl {
         ImGui::End();
     }
 
+    // "builtin:cube" -> "Cube"; "asset:models/crate.glb#mesh0.0" -> "crate.glb #mesh0.0".
+    static std::string asset_label(const std::optional<std::string>& name) {
+        if (!name) return "(unknown)";
+        if (*name == render::kBuiltinCube) return "Cube";
+        constexpr std::string_view prefix = "asset:";
+        if (name->rfind(prefix, 0) != 0) return *name;
+        std::string rest = name->substr(prefix.size());
+        const std::size_t hash = rest.find('#');
+        const std::string file = to_utf8(fs::path(rest.substr(0, hash)).filename());
+        return hash == std::string::npos ? file : file + " " + rest.substr(hash);
+    }
+
+    void content_panel() {
+        // Layouts saved by older versions lack this panel: tab it with the log.
+        if (const ImGuiWindow* log_window = ImGui::FindWindowByName(kLog); log_window && log_window->DockId)
+            ImGui::SetNextWindowDockID(log_window->DockId, ImGuiCond_FirstUseEver);
+        // Select the tab once the reset layout's windows exist.
+        if (focus_content > 0 && --focus_content == 0) ImGui::SetWindowFocus(kContent);
+        if (!ImGui::Begin(kContent, &show_content)) {
+            ImGui::End();
+            return;
+        }
+        if (!content_scanned) {
+            content_models = library->list_models();
+            content_scanned = true;
+        }
+        if (ImGui::Button("Refresh")) {
+            library->refresh();
+            content_models = library->list_models();
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("Rescan the content folder");
+        ImGui::SameLine();
+        content_filter.Draw("##content_filter", 180);
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", to_utf8(library->content_root()).c_str());
+        ImGui::Separator();
+
+        if (content_models.empty()) {
+            ImGui::TextWrapped("No models found. Put .gltf or .glb files in the content folder (start the editor with "
+                               "--content <folder>) and press Refresh.");
+            ImGui::End();
+            return;
+        }
+
+        const float tile = 96.0f;
+        const float spacing = ImGui::GetStyle().ItemSpacing.x;
+        const int columns = std::max(1, static_cast<int>((ImGui::GetContentRegionAvail().x + spacing) / (tile + spacing)));
+        int column = 0;
+        for (const auto& path : content_models) {
+            if (!content_filter.PassFilter(path.c_str())) continue;
+            const fs::path p(path);
+            const std::string stem = to_utf8(p.stem());
+            ImGui::PushID(path.c_str());
+            if (column > 0) ImGui::SameLine();
+            ImGui::BeginGroup();
+            const ImVec2 pos = ImGui::GetCursorScreenPos();
+            const bool chosen = content_selected == path;
+            if (ImGui::Selectable("##tile", chosen, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(tile, tile)))
+                content_selected = path;
+            const bool activate = ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+            if (ImGui::BeginDragDropSource()) {
+                ImGui::SetDragDropPayload(kAssetDrag, path.data(), path.size());
+                ImGui::Text("Place %s", stem.c_str());
+                ImGui::EndDragDropSource();
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) && !ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+                ImGui::SetTooltip("%s\nDouble-click: add at the view focus\nDrag into the viewport: place on the ground",
+                                  path.c_str());
+            // Tile art: a model badge with the file type.
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const ImVec2 a{pos.x + 14, pos.y + 8}, b{pos.x + tile - 14, pos.y + tile - 30};
+            dl->AddRectFilled(a, b, IM_COL32(52, 70, 96, 255), 6.0f);
+            dl->AddRect(a, b, IM_COL32(96, 132, 180, 255), 6.0f, 0, 1.5f);
+            const std::string ext = to_utf8(p.extension());
+            const ImVec2 es = ImGui::CalcTextSize(ext.c_str());
+            dl->AddText({(a.x + b.x - es.x) * 0.5f, (a.y + b.y - es.y) * 0.5f}, IM_COL32(220, 230, 245, 255), ext.c_str());
+            std::string label = stem;
+            while (label.size() > 3 && ImGui::CalcTextSize(label.c_str()).x > tile - 6) label.resize(label.size() - 1);
+            if (label.size() < stem.size()) label += "..";
+            const ImVec2 ls = ImGui::CalcTextSize(label.c_str());
+            dl->AddText({pos.x + (tile - ls.x) * 0.5f, pos.y + tile - 24}, IM_COL32(225, 225, 230, 255), label.c_str());
+            ImGui::EndGroup();
+            ImGui::PopID();
+            if (activate) spawn_model(path, cam.focus);
+            column = (column + 1) % columns;
+        }
+        ImGui::End();
+    }
+
     void log_panel() {
         if (!ImGui::Begin(kLog, &show_log)) {
             ImGui::End();
@@ -1355,8 +1502,9 @@ struct EditorApp::Impl {
     }
 };
 
-EditorApp::EditorApp(render::Renderer& renderer, Logger& logger, std::shared_ptr<MemorySink> log)
-    : impl_(std::make_unique<Impl>(renderer, logger, std::move(log))) {
+EditorApp::EditorApp(render::Renderer& renderer, Logger& logger, std::shared_ptr<MemorySink> log,
+                     std::filesystem::path content_root)
+    : impl_(std::make_unique<Impl>(renderer, logger, std::move(log), std::move(content_root))) {
     impl_->load_demo();
 }
 

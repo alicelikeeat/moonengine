@@ -73,6 +73,19 @@
       "used_by": [
         "editor (embedded via tools/embed_binary.py)"
       ]
+    },
+    {
+      "name": "stb_image",
+      "version": "2.30",
+      "license": "MIT OR Unlicense",
+      "upstream": "https://github.com/nothings/stb",
+      "commit": "013ac3beddff3dbffafd5177e7972067cd2b5083",
+      "sha256": "594c2fe35d49488b4382dbfaec8f98366defca819d916ac95becf3e75f4200b3",
+      "vendored_path": "third_party/stb",
+      "trimmed": "stb_image.h only (SHA-256 of that file); built with PNG and JPEG decoders only",
+      "used_by": [
+        "engine/assets"
+      ]
     }
   ],
   "tooling": [

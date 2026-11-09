@@ -6,3 +6,6 @@
 # fail the build.
 race:libvulkan_lvp.so
 race:libLLVM
+# The Khronos validation layer (also uninstrumented) checks queue submissions
+# on its own thread; TSan reports its internal lock teardown as a race.
+race:libVkLayer_khronos_validation.so

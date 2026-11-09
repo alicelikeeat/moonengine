@@ -12,8 +12,9 @@ namespace aether::render {
 struct Vertex {
     math::Vec3 position;
     math::Vec3 normal;
+    float uv[2] = {0, 0};  // texture coordinates; (0, 0) is the image's top-left
 };
-static_assert(sizeof(Vertex) == 24, "Vertex layout is shared with shaders");
+static_assert(sizeof(Vertex) == 32, "Vertex layout is shared with shaders");
 
 // Triangle list. Front faces wind counter-clockwise seen from outside.
 struct MeshData {
@@ -33,12 +34,25 @@ struct Aabb {
 [[nodiscard]] Aabb compute_bounds(const MeshData& mesh) noexcept;
 
 using MeshId = std::uint32_t;
+using TextureId = std::uint32_t;
 
-// Draws `mesh` with the entity's GlobalTransform.
+// Texture 0 always exists: 1x1 white, so untextured meshes use `color` alone.
+inline constexpr TextureId kWhiteTexture = 0;
+
+struct TextureData {
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::vector<std::uint8_t> rgba;  // RGBA8, top row first
+    bool srgb = true;                // colour data (base colour) is sRGB-encoded
+};
+
+// Draws `mesh` with the entity's GlobalTransform. Final colour is
+// color * texture (base colour, linear).
 struct MeshInstance {
     static constexpr std::string_view kComponentName = "MeshInstance";
     MeshId mesh = 0;
     math::Vec3 color{0.8f, 0.8f, 0.8f};  // linear RGB
+    TextureId texture = kWhiteTexture;
 };
 
 }  // namespace aether::render
