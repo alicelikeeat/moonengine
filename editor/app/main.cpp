@@ -1,7 +1,8 @@
 // Aether Editor executable: window, ImGui context and renderer set-up, then
 // the frame loop driving EditorApp.
 //
-// Usage: aether_editor [level.alevel] [--frames N] [--validation] [--no-vsync]
+// Usage: aether_editor [level.alevel] [--content DIR] [--frames N] [--validation] [--no-vsync]
+//        (models for the Content Browser: DIR, else ./Content, else Content next to the exe)
 //        aether_editor --export-demo <path.alevel>   (writes the demo level, no window)
 #include <vulkan/vulkan_core.h>
 #include <GLFW/glfw3.h>
@@ -23,6 +24,7 @@
 #include "aether/editor/editor_app.hpp"
 #include "aether/foundation/log.hpp"
 #include "aether/foundation/time.hpp"
+#include "aether/render/model_library.hpp"
 #include "aether/render/renderer.hpp"
 #include "aether/world/hierarchy.hpp"
 
@@ -35,12 +37,13 @@ std::vector<std::filesystem::path> g_dropped;  // filled by the GLFW drop callba
 int main(int argc, char** argv) {
     long max_frames = -1;
     bool validation = false, vsync = true;
-    std::filesystem::path open_path;
+    std::filesystem::path open_path, content_dir;
     for (int i = 1; i < argc; ++i) {
         const std::string_view a = argv[i];
         if (a == "--frames" && i + 1 < argc) max_frames = std::strtol(argv[++i], nullptr, 10);
         else if (a == "--validation") validation = true;
         else if (a == "--no-vsync") vsync = false;
+        else if (a == "--content" && i + 1 < argc) content_dir = std::filesystem::path(std::string(argv[++i]));
         else if (a == "--export-demo" && i + 1 < argc) {
             const auto r = editor::save_demo_level(argv[++i]);
             if (!r) std::fprintf(stderr, "export failed: %s\n", r.error().message.c_str());
@@ -121,7 +124,8 @@ int main(int argc, char** argv) {
                     ->resize(static_cast<std::uint32_t>(w), static_cast<std::uint32_t>(h));
             });
 
-            editor::EditorApp app(*renderer, logger, memory_log);
+            editor::EditorApp app(*renderer, logger, memory_log,
+                                  render::find_content_root(content_dir, argc > 0 ? argv[0] : nullptr));
             if (!open_path.empty()) app.open_level(open_path);
             glfwSetDropCallback(window, [](GLFWwindow*, int count, const char** paths) {
                 for (int i = 0; i < count; ++i)
