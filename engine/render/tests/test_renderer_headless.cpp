@@ -40,7 +40,8 @@ std::unique_ptr<Rig> make_rig(std::uint32_t w = 64, std::uint32_t h = 64) {
     auto r = Renderer::create(desc);
     if (!r) {
         if (r.error().code == ErrorCode::Unsupported) AETHER_SKIP("no Vulkan 1.3 device: " + r.error().message);
-        REQUIRE(false && "renderer creation failed");
+        std::fprintf(stderr, "    renderer creation failed: %s\n", r.error().message.c_str());
+        REQUIRE(r.has_value());
     }
     rig->renderer = std::move(r).value();
     auto mesh = rig->renderer->upload_mesh(make_cube(1.0f));
