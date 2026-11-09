@@ -1,0 +1,11 @@
+Aether Engine
+Copyright 2026 The Aether Engine Contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Copyright in each contribution remains with its author. "The Aether Engine
+Contributors" refers to everyone listed in the project's git history.
+
+Third-party components, if any, are listed with their licences in
+third_party/dependencies.json and third_party/README.md. At this revision
+the engine contains no third-party source code.
