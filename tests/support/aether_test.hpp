@@ -19,6 +19,9 @@ struct Registrar {
 };
 
 struct RequireFailed {};
+struct Skipped {
+    std::string reason;
+};
 
 void report_failure(const char* file, int line, const std::string& message);
 
@@ -62,6 +65,11 @@ std::string describe_values(const A& a, const B& b) {
             throw ::aether::test::RequireFailed{};                                      \
         }                                                                               \
     } while (false)
+
+// Ends the current test as skipped (e.g. no GPU). With the environment
+// variable AETHER_TEST_NO_SKIP=1 a skip counts as a failure, so CI machines
+// that are expected to run everything cannot pass by skipping.
+#define AETHER_SKIP(reason) throw ::aether::test::Skipped{reason}
 
 #define CHECK_EQ(a, b)                                                                  \
     do {                                                                                \
