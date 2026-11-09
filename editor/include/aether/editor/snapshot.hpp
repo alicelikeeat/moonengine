@@ -10,14 +10,17 @@
 #include <string>
 #include <vector>
 
-#include "aether/editor/components.hpp"
+#include "aether/gameplay/spin.hpp"
 #include "aether/foundation/uuid.hpp"
 #include "aether/render/mesh.hpp"
 #include "aether/world/hierarchy.hpp"
 #include "aether/world/name.hpp"
+#include "aether/world/serialization.hpp"
 #include "aether/world/world.hpp"
 
 namespace aether::editor {
+
+using gameplay::Spin;
 
 struct EntityState {
     Uuid id;
@@ -27,6 +30,7 @@ struct EntityState {
     std::optional<world::Transform> transform;
     std::optional<render::MeshInstance> mesh;
     std::optional<Spin> spin;
+    std::optional<world::UnknownComponents> unknown;  // data from newer versions or plug-ins
 };
 
 // State of one entity (its components and parent link, not its children).

@@ -2,6 +2,7 @@ aether_add_module(render
     SOURCES
         src/camera.cpp
         src/mesh.cpp
+        src/mesh_registry.cpp
         src/vulkan_renderer.cpp
     DEPENDS
         foundation
@@ -19,9 +20,11 @@ if(AETHER_BUILD_TESTS)
     aether_add_test(aether_render_tests
         SOURCES
             tests/test_camera_mesh.cpp
+            tests/test_mesh_registry.cpp
             tests/test_renderer_headless.cpp
         LINK
             Aether::render)
+    target_link_libraries(aether_render_tests PRIVATE ${CMAKE_DL_LIBS})
     # GPU tests run on the Mesa software driver in CI; suppress sanitizer
     # reports that originate inside the (uninstrumented) driver only.
     set(_san_dir ${PROJECT_SOURCE_DIR}/tools/sanitizers)

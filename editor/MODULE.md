@@ -15,7 +15,7 @@
 | `picking.*` | Screen ray, ray–AABB, nearest-entity pick through the hierarchy |
 | `snapshot.*` | Capture/restore entity state by Uuid (components, parent, child order) |
 | `undo.*` | Undo stack and command factories (edit, create, delete, reparent) |
-| `demo_scene.*` | The demo level |
+| `demo_scene.*` | The demo level, its reproducible export, and the level component registrations |
 | `editor_app.*` | All panels: viewport, outliner, details, place actors, log, stats, menus, toolbar, status bar |
 | `theme.cpp` | Dark theme and embedded font |
 
@@ -25,7 +25,9 @@
 - Editor-known components (inspected, snapshotted): `Name`, `Transform`, `MeshInstance`, `Spin`. Others are listed read-only in Details.
 - Edits made during Play are discarded by Stop and are not recorded for undo.
 - The host must destroy the renderer before `ImGui::DestroyContext()`.
+- Levels are saved with `world::save_level_file`; the editor refuses to save during Play. Unsaved changes are tracked with `UndoStack::revision()`.
+- `samples/levels/solar_system.alevel` must equal `aether_editor --export-demo` output (enforced by a test).
 
 ## Not yet implemented
 
-Saving/loading levels (needs the scene format), multi-selection, copy/paste between levels, a content browser, reflection-driven inspectors, editor camera bookmarks, and AI assistant panels over ACP.
+Multi-selection, copy/paste between levels, a content browser, reflection-driven inspectors, editor camera bookmarks, and AI assistant panels over ACP.

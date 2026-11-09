@@ -24,6 +24,8 @@ Copy-Item "$BuildDir/samples/spinning_cubes/Release/aether_spinning_cubes.exe" $
 Copy-Item LICENSE, NOTICE $stage
 Copy-Item third_party/licenses/* (Join-Path $stage "licenses")
 Copy-Item docs/user/quick-start.md (Join-Path $stage "README.md")
+New-Item -ItemType Directory -Force -Path (Join-Path $stage "levels") | Out-Null
+Copy-Item samples/levels/*.alevel (Join-Path $stage "levels")
 $info = @(
     "version: $Version"
     "commit: $env:GITHUB_SHA"

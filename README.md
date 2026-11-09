@@ -16,11 +16,12 @@ This is a young project. Here is exactly what exists today and what does not.
 | World: archetype ECS, queries, command buffers, parallel system schedule, scene hierarchy, transforms | ✅ Implemented and tested (30 tests) |
 | Aether Control Protocol (ACP) for tools and AI agents | 📝 Draft 0.1 schemas + validator |
 | Render: Vulkan 1.3 renderer, windowed and headless | ✅ First slice, tested on software Vulkan (8 tests) |
-| Editor: viewport + gizmos, outliner, details, undo/redo, play-in-editor | ✅ First version (11 tests) — cannot save levels yet |
+| Editor: viewport + gizmos, outliner, details, undo/redo, play-in-editor, save/open levels | ✅ Usable preview (15 tests) |
+| Level files: documented JSON format v1 with schema and migrations | ✅ Done |
 | Sample app: `samples/spinning_cubes` | ✅ Runs; needs a Vulkan 1.3 GPU driver |
 | Scene save format, materials, Assets, Physics, Animation, AI agents | ⏳ Not started — see [ROADMAP.md](ROADMAP.md) |
 
-There is a first renderer, a level editor and a demo program; levels cannot be saved yet. Claims about performance versus other engines will only be made with published, reproducible benchmarks.
+There is a first renderer, a level editor that saves and opens levels, and a runtime that plays them. Claims about performance versus other engines will only be made with published, reproducible benchmarks.
 
 ## Principles
 
@@ -56,6 +57,7 @@ Full instructions: [docs/building.md](docs/building.md).
 | `engine/world` | Entity component system: entities, components, queries, systems |
 | `engine/render` | Renderer interface and Vulkan backend |
 | `editor` | Level editor (`aether_editor`) |
+| `engine/gameplay` | Gameplay components and systems |
 | `samples` | Runnable demo programs |
 | `protocols/acp` | Aether Control Protocol schemas, examples and spec |
 | `tests/support` | Dependency-free unit test harness |

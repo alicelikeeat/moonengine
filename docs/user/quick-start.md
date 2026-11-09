@@ -6,6 +6,8 @@ This package contains two programs. Both need a GPU driver with **Vulkan 1.3** (
 
 Opens with a demo level (a small solar system). Panels can be dragged, docked and tabbed; *Window > Reset Layout* restores the default.
 
+**Levels** are saved as `.alevel` files (*File > Save*, Ctrl+S). Open them with *File > Open Level* (Ctrl+O), by dragging a file onto the editor window, or with `aether_editor.exe path\to\level.alevel`. The title bar shows `*` when there are unsaved changes, and the editor asks before discarding them. `levels/solar_system.alevel` is the demo level as a file.
+
 | Panel | What it does |
 | --- | --- |
 | Viewport | 3D view. Click to select; drag the gizmo to move, rotate or scale |
@@ -30,6 +32,8 @@ Toolbar: **Play / Pause / Stop** (simulation; Stop restores the level), **Move /
 | F | Focus selection (or double-click in the Outliner) |
 | W / E / R | Move / Rotate / Scale gizmo |
 | Ctrl while dragging | Toggle snapping |
+| Ctrl+N / Ctrl+O | New / Open level |
+| Ctrl+S / Ctrl+Shift+S | Save / Save As |
 | Ctrl+Z / Ctrl+Y | Undo / Redo |
 | Ctrl+D / Delete | Duplicate / Delete |
 | Alt+P / Esc | Play-Pause / Stop |
@@ -39,7 +43,7 @@ Layout is saved to `aether_editor.ini` next to where the editor was started.
 
 ## aether_spinning_cubes.exe — runtime demo
 
-The same solar system running as a game would, with no editor. Esc quits. Options: `--validation`, `--no-vsync`, `--frames N`.
+The same solar system running as a game would, with no editor. Esc quits. Run any level saved by the editor with `--level path\to\level.alevel`. Other options: `--validation`, `--no-vsync`, `--frames N`.
 
 ## Licence
 

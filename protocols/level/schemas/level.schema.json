@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aether-engine.dev/formats/level/1/level.schema.json",
+  "title": "Aether level (format version 1)",
+  "description": "A level file (.alevel). See docs/formats/level-v1.md. Component data is validated by the engine per component type; this schema fixes the document structure and the built-in components.",
+  "type": "object",
+  "required": ["format", "version", "entities"],
+  "properties": {
+    "format": { "const": "aether.level" },
+    "version": { "const": 1 },
+    "generator": { "type": "string", "description": "Tool that wrote the file (informational)." },
+    "entities": {
+      "type": "array",
+      "description": "Parents appear before their children; siblings appear in child order.",
+      "items": { "$ref": "#/$defs/entity" }
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+    },
+    "vec3": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+    "quat": { "type": "array", "items": { "type": "number" }, "minItems": 4, "maxItems": 4 },
+    "entity": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "$ref": "#/$defs/uuid" },
+        "parent": { "$ref": "#/$defs/uuid" },
+        "components": {
+          "type": "object",
+          "description": "Keyed by component name. Unknown names are allowed and preserved by the engine.",
+          "properties": {
+            "Name": {
+              "type": "object",
+              "properties": { "value": { "type": "string" } },
+              "additionalProperties": false
+            },
+            "Transform": {
+              "type": "object",
+              "properties": {
+                "position": { "$ref": "#/$defs/vec3" },
+                "rotation": { "$ref": "#/$defs/quat", "description": "Quaternion (x, y, z, w)." },
+                "scale": { "$ref": "#/$defs/vec3" }
+              },
+              "additionalProperties": false
+            },
+            "MeshInstance": {
+              "type": "object",
+              "properties": {
+                "mesh": { "type": "string", "description": "Mesh name, e.g. builtin:cube." },
+                "color": { "$ref": "#/$defs/vec3", "description": "Linear RGB." }
+              },
+              "additionalProperties": false
+            },
+            "Spin": {
+              "type": "object",
+              "properties": {
+                "axis": { "$ref": "#/$defs/vec3" },
+                "speed": { "type": "number", "description": "Radians per second." }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": { "type": ["object", "array", "string", "number", "boolean", "null"] }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

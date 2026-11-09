@@ -4,6 +4,23 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-09
+
+Levels can be saved and opened.
+
+### Added
+- Level files (`.alevel`): documented JSON format v1 (`docs/formats/level-v1.md`) with a JSON Schema checked in CI; save/load with type-checked, rollback-on-error loading; unknown or invalid component data preserved; step-wise migrations (`upgrade_level`); atomic file writes. ADR 0011.
+- Foundation JSON parser and writer with depth/size limits, line/column errors and exact float round-trips; fuzz-tested.
+- `SerializerRegistry` with per-module registration (world: Name, Transform; render: MeshInstance via `MeshRegistry` names; gameplay: Spin). `World::for_each_entity`.
+- Gameplay module (layer 3) with the `Spin` component and system, shared by editor and runtime.
+- Editor: New / Open / Open Recent / Save / Save As, built-in file browser, unsaved-changes prompt (also on window close), title and status bar show the level and `*`, open by command line or drag-and-drop, `--export-demo`.
+- Runtime demo: `--level file.alevel` plays levels saved by the editor.
+- `samples/levels/solar_system.alevel`, kept identical to the editor's export by a test; shipped in the Windows package.
+
+### Fixed
+- Editor shortcuts no longer fire while a dialog is open.
+- Render tests keep the Mesa software driver loaded so sanitizer leak reports from the driver are attributed correctly (they could be mislabelled after the driver was unloaded, defeating the driver-only suppressions).
+
 ## [0.2.0] - 2026-11-09
 
 Editor preview. Windows editor and demo published on GitHub Releases.

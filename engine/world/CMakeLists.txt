@@ -3,6 +3,7 @@ aether_add_module(world
         src/archetype.cpp
         src/hierarchy.cpp
         src/schedule.cpp
+        src/serialization.cpp
         src/world.cpp
     DEPENDS
         foundation)
@@ -15,6 +16,7 @@ if(AETHER_BUILD_TESTS)
             tests/test_hierarchy.cpp
             tests/test_queries.cpp
             tests/test_schedule.cpp
+            tests/test_serialization.cpp
             tests/test_world_fuzz.cpp
         LINK
             Aether::world)

@@ -5,7 +5,8 @@
 // orbit the sun, purely through parent transforms), a fixed simulation
 // timestep, and the Vulkan renderer presenting to a GLFW window.
 //
-// Usage: aether_spinning_cubes [--frames N] [--validation] [--no-vsync]
+// Usage: aether_spinning_cubes [--level file.alevel] [--frames N] [--validation] [--no-vsync]
+//   --level F      run a level saved by the editor instead of the built-in scene
 //   --frames N     exit after N frames (used by CI smoke tests)
 //   --validation   enable Khronos validation if installed
 //   --no-vsync     present as fast as possible
@@ -28,6 +29,9 @@
 #include "aether/render/renderer.hpp"
 #include "aether/world/hierarchy.hpp"
 #include "aether/world/schedule.hpp"
+#include "aether/world/serialization.hpp"
+#include "aether/gameplay/spin.hpp"
+#include "aether/render/mesh_registry.hpp"
 
 using namespace aether;
 using namespace aether::math;
@@ -35,15 +39,11 @@ using namespace aether::world;
 
 namespace {
 
-// Rotates the entity's local transform around `axis` at `speed` rad/s.
-struct Spin {
-    static constexpr std::string_view kComponentName = "Spin";
-    Vec3 axis{0, 1, 0};
-    float speed = 1.0f;
-};
+using gameplay::Spin;
 
 struct Options {
-    long frames = -1;  // -1: run until closed
+    std::string level;  // level file to run instead of the built-in scene
+    long frames = -1;   // -1: run until closed
     bool validation = false;
     bool vsync = true;
 };
@@ -53,6 +53,7 @@ Options parse(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         const std::string_view a = argv[i];
         if (a == "--frames" && i + 1 < argc) o.frames = std::strtol(argv[++i], nullptr, 10);
+        else if (a == "--level" && i + 1 < argc) o.level = argv[++i];
         else if (a == "--validation") o.validation = true;
         else if (a == "--no-vsync") o.vsync = false;
         else std::cerr << "ignoring unknown argument: " << a << "\n";
@@ -161,15 +162,27 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "%s\n", cube.error().message.c_str());
             return 1;
         }
-        build_scene(world, cube.value());
+        if (opt.level.empty()) {
+            build_scene(world, cube.value());
+        } else {
+            // Run a level made in the editor: same components, same file format.
+            render::MeshRegistry meshes;
+            meshes.add(std::string(render::kBuiltinCube), cube.value());
+            SerializerRegistry registry;
+            register_core_components(registry);
+            render::register_components(registry, meshes);
+            gameplay::register_components(registry);
+            auto report = load_level_file(opt.level, world, registry);
+            if (!report) {
+                std::fprintf(stderr, "Could not load %s: %s\n", opt.level.c_str(), report.error().message.c_str());
+                return 1;
+            }
+            for (const auto& w : report.value().warnings) std::fprintf(stderr, "warning: %s\n", w.c_str());
+            std::printf("loaded %s (%zu entities)\n", opt.level.c_str(), report.value().entities);
+        }
 
         Schedule schedule;
-        schedule.add_system("spin", SystemAccess::of<const Spin, Transform>(world), [](SystemContext& ctx) {
-            const float dt = static_cast<float>(ctx.dt);
-            ctx.each<const Spin, Transform>([dt](const Spin& s, Transform& t) {
-                t.rotation = normalize(Quat::from_axis_angle(s.axis, s.speed * dt) * t.rotation);
-            });
-        });
+        gameplay::add_systems(schedule, world);
 
         JobSystem jobs;
         FixedTimestep clock(16'666'667);  // 60 Hz simulation

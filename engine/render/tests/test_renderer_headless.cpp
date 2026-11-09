@@ -16,6 +16,19 @@ using namespace aether::math;
 using namespace aether::render;
 using namespace aether::world;
 
+#if defined(__linux__)
+#include <dlfcn.h>
+namespace {
+// Keep Mesa's software Vulkan driver loaded for the whole process. The
+// Vulkan loader unloads drivers at vkDestroyInstance; LeakSanitizer then
+// attributes the driver's own leftover allocations to whatever library
+// reuses those addresses, which defeats the driver-only suppressions in
+// tools/sanitizers. Pinning it keeps leak reports accurate. No effect when
+// the driver is not installed.
+const bool kDriverPinned = dlopen("libvulkan_lvp.so", RTLD_LAZY | RTLD_NODELETE) != nullptr;
+}  // namespace
+#endif
+
 namespace {
 
 constexpr Vec3 kClear{0.1f, 0.2f, 0.3f};

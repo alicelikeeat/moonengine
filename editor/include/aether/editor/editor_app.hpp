@@ -11,6 +11,7 @@
 // This header has no ImGui types so tools and tests can include it freely.
 #pragma once
 
+#include <filesystem>
 #include <memory>
 #include <string>
 
@@ -37,6 +38,11 @@ public:
     void set_frame_stats(const render::FrameStats& stats);
 
     [[nodiscard]] bool quit_requested() const;
+    // Window close / Exit: asks to save unsaved changes first.
+    void request_quit();
+    // Opens a level file (command line, drag-and-drop), asking to save first.
+    void open_level(const std::filesystem::path& path);
+    [[nodiscard]] std::string window_title() const;
 
     // Level management (also reachable from the File menu).
     void new_level();

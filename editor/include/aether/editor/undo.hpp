@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
@@ -29,7 +30,13 @@ public:
     void push(Command command);
     bool undo(world::World& world);
     bool redo(world::World& world);
-    void clear() noexcept { done_.clear(); undone_.clear(); }
+    void clear() noexcept {
+        done_.clear();
+        undone_.clear();
+        ++revision_;
+    }
+    // Changes on every push, undo, redo and clear: compare to detect unsaved edits.
+    [[nodiscard]] std::uint64_t revision() const noexcept { return revision_; }
 
     [[nodiscard]] bool can_undo() const noexcept { return !done_.empty(); }
     [[nodiscard]] bool can_redo() const noexcept { return !undone_.empty(); }
@@ -41,6 +48,7 @@ private:
     std::vector<Command> done_;
     std::vector<Command> undone_;
     std::size_t limit_;
+    std::uint64_t revision_ = 0;
 };
 
 // Command factories for common editor actions.

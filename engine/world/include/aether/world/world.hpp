@@ -124,6 +124,14 @@ public:
     template <typename... Ts>
     [[nodiscard]] std::size_t count() const;
 
+    // Calls fn(Entity) for every live entity, in storage order.
+    template <typename Fn>
+    void for_each_entity(Fn&& fn) {
+        IterationGuard guard(*this);
+        for (const auto& arch : archetypes_)
+            for (std::size_t row = 0; row < arch->size(); ++row) fn(arch->entity(row));
+    }
+
     [[nodiscard]] std::size_t archetype_count() const noexcept { return archetypes_.size(); }
 
 private:

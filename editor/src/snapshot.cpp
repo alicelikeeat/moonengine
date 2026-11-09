@@ -19,6 +19,7 @@ EntityState capture(world::World& w, world::Entity e) {
     if (const auto* c = w.get<world::Transform>(e)) s.transform = *c;
     if (const auto* c = w.get<render::MeshInstance>(e)) s.mesh = *c;
     if (const auto* c = w.get<Spin>(e)) s.spin = *c;
+    if (const auto* c = w.get<world::UnknownComponents>(e)) s.unknown = *c;
     return s;
 }
 
@@ -72,10 +73,12 @@ void apply_components(world::World& w, world::Entity e, const EntityState& s) {
     struct TransformTag { using type = world::Transform; };
     struct MeshTag { using type = render::MeshInstance; };
     struct SpinTag { using type = Spin; };
+    struct UnknownTag { using type = world::UnknownComponents; };
     sync(s.name, NameTag{});
     sync(s.transform, TransformTag{});
     sync(s.mesh, MeshTag{});
     sync(s.spin, SpinTag{});
+    sync(s.unknown, UnknownTag{});
 }
 
 void restore(world::World& w, const std::vector<EntityState>& states) {

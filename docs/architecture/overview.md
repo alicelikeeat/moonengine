@@ -14,7 +14,7 @@ Dependencies only point **down** the layers. The rule is enforced at configure t
 | 2 | Render | `engine/render` | RHI, render graph, materials, lighting | **First slice: Vulkan 1.3 renderer** |
 | 2 | Simulation | `engine/simulation` | Physics, collision, fixed step, replay | Planned (M4) |
 | 2 | Animation | `engine/animation` | Skeletons, animation graph, IK | Planned (M4) |
-| 3 | Gameplay | `engine/gameplay` | Scripting, events, game logic | Planned (M4) |
+| 3 | Gameplay | `engine/gameplay` | Scripting, events, game logic | **Started: Spin component and system** |
 | 4 | Intelligence | `intelligence` | Model providers, agents, ACP tools | Planned (M3) |
 | 5 | Editor | `editor` | Editing UI, debugging, profiling | **First version: level editor** |
 
@@ -55,6 +55,10 @@ A Vulkan 1.3 renderer behind a backend-neutral `Renderer` interface ([ADR 0009](
 ## Editor today
 
 A docking level editor on Dear ImGui ([ADR 0010](../adr/0010-editor-ui-dear-imgui.md)): viewport with gizmos and picking, outliner, details, undo/redo and play-in-editor. See [`editor/MODULE.md`](../../editor/MODULE.md).
+
+## Level files
+
+Levels are JSON (`.alevel`, [format spec](../formats/level-v1.md), [ADR 0011](../adr/0011-json-level-format.md)). Each module registers serializers for its components; unknown data is preserved.
 
 ## Verification
 

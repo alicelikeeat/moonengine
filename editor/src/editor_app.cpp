@@ -9,12 +9,12 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <optional>
 #include <random>
 #include <string>
 #include <vector>
 
-#include "aether/editor/components.hpp"
 #include "aether/editor/demo_scene.hpp"
 #include "aether/editor/editor_camera.hpp"
 #include "aether/editor/picking.hpp"
@@ -23,6 +23,9 @@
 #include "aether/world/hierarchy.hpp"
 #include "aether/world/name.hpp"
 #include "aether/world/schedule.hpp"
+#include "aether/world/serialization.hpp"
+#include "aether/gameplay/spin.hpp"
+#include "aether/render/mesh_registry.hpp"
 
 namespace aether::editor {
 
@@ -43,6 +46,19 @@ constexpr const char* kPlace = "Place Actors";
 constexpr const char* kLog = "Output Log";
 constexpr const char* kStats = "Stats";
 constexpr const char* kOutlinerDrag = "AETHER_ENTITY";
+constexpr const char* kGenerator = "Aether Editor 0.3.0";
+
+namespace fs = std::filesystem;
+
+// UTF-8 conversions that also work on Windows, where path::string() uses
+// the ANSI code page and can throw for characters outside it.
+std::string to_utf8(const fs::path& p) {
+    const std::u8string u = p.u8string();
+    return std::string(reinterpret_cast<const char*>(u.data()), u.size());
+}
+fs::path from_utf8(const std::string& s) {
+    return fs::path(std::u8string(reinterpret_cast<const char8_t*>(s.data()), s.size()));
+}
 
 // OpenGL-style projection for ImGuizmo (Y up in NDC), matching the
 // renderer's Vulkan projection otherwise.
@@ -80,6 +96,28 @@ struct EditorApp::Impl {
     Schedule schedule;
     render::MeshId cube = 0;
     std::vector<render::Aabb> mesh_bounds;
+    render::MeshRegistry meshes;
+    world::SerializerRegistry registry;
+
+    // Level file state.
+    fs::path level_path;               // empty: never saved
+    std::uint64_t saved_revision = 0;  // undo revision at the last save/load
+    std::vector<fs::path> recent;
+
+    // Actions that may need the "unsaved changes" prompt first.
+    enum class Pending { None, New, Demo, Open, Quit } pending = Pending::None;
+    fs::path pending_path;
+    bool unsaved_prompt = false;
+    bool continue_after_save = false;
+
+    // File browser.
+    enum class DialogMode { Open, Save } dialog_mode = DialogMode::Open;
+    bool dialog_requested = false;
+    fs::path dialog_dir;
+    char dialog_name[256] = {};
+    std::string dialog_error;
+    std::string error_title, error_text;
+    bool error_requested = false;
 
     UndoStack undo;
     Uuid selected;  // nil = nothing selected
@@ -119,42 +157,278 @@ struct EditorApp::Impl {
         if (id) cube = id.value();
         mesh_bounds.resize(cube + 1);
         mesh_bounds[cube] = render::compute_bounds(mesh);
+        meshes.add(std::string(render::kBuiltinCube), cube);
+        register_level_components(registry, meshes);
+        std::error_code ec;
+        dialog_dir = fs::current_path(ec);
     }
 
     // ---- Level --------------------------------------------------------
 
-    void reset_world() {
-        world = std::make_unique<world::World>();
+    void install_world(std::unique_ptr<world::World> w) {
+        world = std::move(w);
         schedule = Schedule{};
-        schedule.add_system("spin", SystemAccess::of<const Spin, world::Transform>(*world), [](SystemContext& ctx) {
-            const float dt = static_cast<float>(ctx.dt);
-            ctx.each<const Spin, world::Transform>([dt](const Spin& s, world::Transform& t) {
-                if (s.speed != 0) t.rotation = math::normalize(Quat::from_axis_angle(s.axis, s.speed * dt) * t.rotation);
-            });
-        });
+        gameplay::add_systems(schedule, *world);
         // Register editor components up front so queries and snapshots see them.
         (void)world->component_id<world::Name>();
         (void)world->component_id<render::MeshInstance>();
+        (void)world->component_id<world::UnknownComponents>();
+    }
+    void reset_world() { install_world(std::make_unique<world::World>()); }
+
+    void level_replaced(fs::path path) {
+        undo.clear();
+        saved_revision = undo.revision();
+        selected = {};
+        level_path = std::move(path);
+        cam = EditorCamera{};
+        cam.distance = 22;
     }
 
     void new_level() {
         stop();
         reset_world();
-        undo.clear();
-        selected = {};
-        cam = EditorCamera{};
+        level_replaced({});
         AETHER_LOG(logger, LogLevel::Info, "editor", "new level");
     }
 
     void load_demo() {
         stop();
         reset_world();
-        undo.clear();
-        selected = {};
         build_demo_scene(*world, cube);
-        cam = EditorCamera{};
-        cam.distance = 22;
+        level_replaced({});
         AETHER_LOG(logger, LogLevel::Info, "editor", "loaded demo level ({} entities)", world->entity_count());
+    }
+
+    // ---- Files ----------------------------------------------------------
+
+    bool dirty() const { return undo.revision() != saved_revision; }
+    std::string level_name() const { return level_path.empty() ? "Untitled" : to_utf8(level_path.filename()); }
+
+    void show_error(std::string title, std::string text) {
+        AETHER_LOG(logger, LogLevel::Error, "editor", "{}: {}", title, text);
+        error_title = std::move(title);
+        error_text = std::move(text);
+        error_requested = true;
+    }
+
+    void remember(const fs::path& p) {
+        recent.erase(std::remove(recent.begin(), recent.end(), p), recent.end());
+        recent.insert(recent.begin(), p);
+        if (recent.size() > 8) recent.pop_back();
+    }
+
+    bool save_to(fs::path path) {
+        if (play != PlayState::Editing) {
+            show_error("Cannot save", "Stop the simulation before saving; play-mode changes are not part of the level.");
+            return false;
+        }
+        if (path.extension() != world::kLevelFileExtension) path += world::kLevelFileExtension;
+        if (auto r = world::save_level_file(path, *world, registry, kGenerator); !r) {
+            show_error("Save failed", r.error().message);
+            return false;
+        }
+        level_path = path;
+        saved_revision = undo.revision();
+        remember(path);
+        AETHER_LOG(logger, LogLevel::Info, "editor", "saved {} ({} entities)", to_utf8(path), world->entity_count());
+        return true;
+    }
+
+    void open_from(const fs::path& path) {
+        auto fresh = std::make_unique<world::World>();
+        auto report = world::load_level_file(path, *fresh, registry);
+        if (!report) {
+            show_error("Could not open level", report.error().message);  // current level stays open
+            return;
+        }
+        stop();
+        install_world(std::move(fresh));
+        level_replaced(path);
+        remember(path);
+        for (const auto& w : report.value().warnings) AETHER_LOG(logger, LogLevel::Warn, "editor", "{}", w);
+        AETHER_LOG(logger, LogLevel::Info, "editor", "opened {} ({} entities, {} warnings)", to_utf8(path),
+                   report.value().entities, report.value().warnings.size());
+    }
+
+    void save() {
+        if (level_path.empty()) open_dialog(DialogMode::Save);
+        else save_to(level_path);
+    }
+
+    void open_dialog(DialogMode mode) {
+        dialog_mode = mode;
+        dialog_requested = true;
+        dialog_error.clear();
+        const std::string name = mode == DialogMode::Save ? (level_path.empty() ? std::string("NewLevel")
+                                                                                 : to_utf8(level_path.stem()))
+                                                          : std::string();
+        std::snprintf(dialog_name, sizeof dialog_name, "%s", name.c_str());
+        if (!level_path.empty()) dialog_dir = level_path.parent_path();
+    }
+
+    // Runs `p` now, or after the unsaved-changes prompt.
+    void request(Pending p, fs::path path = {}) {
+        if (dirty()) {
+            pending = p;
+            pending_path = std::move(path);
+            unsaved_prompt = true;
+            return;
+        }
+        perform(p, path);
+    }
+
+    void perform(Pending p, const fs::path& path) {
+        switch (p) {
+            case Pending::None: break;
+            case Pending::New: new_level(); break;
+            case Pending::Demo: load_demo(); break;
+            case Pending::Open:
+                if (path.empty()) open_dialog(DialogMode::Open);
+                else open_from(path);
+                break;
+            case Pending::Quit: quit = true; break;
+        }
+    }
+
+    void file_popups() {
+        if (unsaved_prompt) {
+            ImGui::OpenPopup("Unsaved Changes");
+            unsaved_prompt = false;
+        }
+        if (ImGui::BeginPopupModal("Unsaved Changes", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Save changes to %s before continuing?", level_name().c_str());
+            ImGui::TextDisabled("Unsaved changes will be lost otherwise.");
+            ImGui::Spacing();
+            const Pending p = pending;
+            const fs::path path = pending_path;
+            if (ImGui::Button("Save", ImVec2(110, 0))) {
+                ImGui::CloseCurrentPopup();
+                if (level_path.empty()) {
+                    continue_after_save = true;
+                    open_dialog(DialogMode::Save);
+                } else if (save_to(level_path)) {
+                    perform(p, path);
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Don't Save", ImVec2(110, 0))) {
+                ImGui::CloseCurrentPopup();
+                perform(p, path);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(110, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+                pending = Pending::None;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        const char* dialog_title = dialog_mode == DialogMode::Open ? "Open Level" : "Save Level As";
+        if (dialog_requested) {
+            ImGui::OpenPopup(dialog_title);
+            dialog_requested = false;
+        }
+        ImGui::SetNextWindowSize(ImVec2(620, 440), ImGuiCond_Appearing);
+        if (ImGui::BeginPopupModal(dialog_title, nullptr)) {
+            file_browser();
+            ImGui::EndPopup();
+        }
+
+        if (error_requested) {
+            ImGui::OpenPopup("Error");
+            error_requested = false;
+        }
+        if (ImGui::BeginPopupModal("Error", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextUnformatted(error_title.c_str());
+            ImGui::Separator();
+            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 36);
+            ImGui::TextUnformatted(error_text.c_str());
+            ImGui::PopTextWrapPos();
+            if (ImGui::Button("OK", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Enter)) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+    }
+
+    void file_browser() {
+        std::error_code ec;
+        ImGui::TextDisabled("Folder");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Up") && dialog_dir.has_parent_path() && dialog_dir.parent_path() != dialog_dir)
+            dialog_dir = dialog_dir.parent_path();
+        ImGui::SameLine();
+        ImGui::TextUnformatted(to_utf8(dialog_dir).c_str());
+
+        std::vector<fs::path> dirs, files;
+        for (fs::directory_iterator it(dialog_dir, fs::directory_options::skip_permission_denied, ec), end;
+             !ec && it != end; it.increment(ec)) {
+            const fs::path& p = it->path();
+            const std::string name = to_utf8(p.filename());
+            if (name.empty() || name[0] == '.') continue;
+            if (it->is_directory(ec)) dirs.push_back(p);
+            else if (p.extension() == world::kLevelFileExtension) files.push_back(p);
+        }
+        std::sort(dirs.begin(), dirs.end());
+        std::sort(files.begin(), files.end());
+
+        const float footer = ImGui::GetFrameHeightWithSpacing() * 2 + ImGui::GetStyle().ItemSpacing.y * 2;
+        bool confirm = false;
+        if (ImGui::BeginChild("entries", ImVec2(0, -footer), ImGuiChildFlags_Borders)) {
+            if (ec) ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "Cannot read this folder.");
+            for (const auto& d : dirs) {
+                const std::string label = "[folder]  " + to_utf8(d.filename());
+                if (ImGui::Selectable(label.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick) &&
+                    ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                    dialog_dir = d;
+            }
+            for (const auto& f : files) {
+                const std::string name = to_utf8(f.stem());
+                const bool selected_file = name == dialog_name;
+                if (ImGui::Selectable(to_utf8(f.filename()).c_str(), selected_file, ImGuiSelectableFlags_AllowDoubleClick)) {
+                    std::snprintf(dialog_name, sizeof dialog_name, "%s", name.c_str());
+                    if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) confirm = true;
+                }
+            }
+            if (dirs.empty() && files.empty() && !ec) ImGui::TextDisabled("No levels or folders here.");
+        }
+        ImGui::EndChild();
+
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();  // type a name, Enter to confirm
+        if (ImGui::InputTextWithHint("##name", "Level name", dialog_name, sizeof dialog_name,
+                                     ImGuiInputTextFlags_EnterReturnsTrue))
+            confirm = true;
+        if (!dialog_error.empty()) ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "%s", dialog_error.c_str());
+        const char* action = dialog_mode == DialogMode::Open ? "Open" : "Save";
+        if (ImGui::Button(action, ImVec2(110, 0))) confirm = true;
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(110, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+            continue_after_save = false;
+            pending = Pending::None;
+            ImGui::CloseCurrentPopup();
+            return;
+        }
+        if (!confirm) return;
+
+        const std::string name = dialog_name;
+        if (name.empty() || name.find_first_of("/\\:*?\"<>|") != std::string::npos) {
+            dialog_error = "Enter a file name without / \\ : * ? \" < > |";
+            return;
+        }
+        fs::path target = dialog_dir / from_utf8(name);
+        if (target.extension() != world::kLevelFileExtension) target += world::kLevelFileExtension;
+        if (dialog_mode == DialogMode::Open) {
+            if (!fs::exists(target, ec)) {
+                dialog_error = "No such level: " + to_utf8(target.filename());
+                return;
+            }
+            ImGui::CloseCurrentPopup();
+            open_from(target);
+        } else {
+            ImGui::CloseCurrentPopup();
+            if (save_to(target) && continue_after_save) perform(pending, pending_path);
+            continue_after_save = false;
+        }
     }
 
     // ---- Selection & edits -------------------------------------------
@@ -296,13 +570,19 @@ struct EditorApp::Impl {
 
     void shortcuts() {
         ImGuiIO& io = ImGui::GetIO();
-        if (io.WantTextInput) return;
+        // Dialogs (save prompt, file browser, errors) own the keyboard.
+        if (io.WantTextInput || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;
         const bool ctrl = io.KeyCtrl;
         if (ctrl && ImGui::IsKeyPressed(ImGuiKey_Z, false)) undo.undo(*world);
         if (ctrl && (ImGui::IsKeyPressed(ImGuiKey_Y, false) || (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false))))
             undo.redo(*world);
         if (ctrl && ImGui::IsKeyPressed(ImGuiKey_D, false)) duplicate_selected();
-        if (ctrl && ImGui::IsKeyPressed(ImGuiKey_N, false)) new_level();
+        if (ctrl && ImGui::IsKeyPressed(ImGuiKey_N, false)) request(Pending::New);
+        if (ctrl && ImGui::IsKeyPressed(ImGuiKey_O, false)) request(Pending::Open);
+        if (ctrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+            if (io.KeyShift) open_dialog(DialogMode::Save);
+            else save();
+        }
         if (io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_P, false)) play_or_pause();
         if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) delete_selected();
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
@@ -339,6 +619,7 @@ struct EditorApp::Impl {
         if (show_stats) stats_panel();
         if (show_demo) ImGui::ShowDemoWindow(&show_demo);
         about_popups();
+        file_popups();
     }
 
     void build_default_layout(ImGuiID dock, ImVec2 size) {
@@ -365,10 +646,20 @@ struct EditorApp::Impl {
     void main_menu() {
         if (!ImGui::BeginMainMenuBar()) return;
         if (ImGui::BeginMenu("File")) {
-            if (ImGui::MenuItem("New Level", "Ctrl+N")) new_level();
-            if (ImGui::MenuItem("Open Demo Level")) load_demo();
+            if (ImGui::MenuItem("New Level", "Ctrl+N")) request(Pending::New);
+            if (ImGui::MenuItem("Open Level...", "Ctrl+O")) request(Pending::Open);
+            if (ImGui::BeginMenu("Open Recent", !recent.empty())) {
+                for (const auto& r : recent)
+                    if (ImGui::MenuItem(to_utf8(r.filename()).c_str())) request(Pending::Open, r);
+                ImGui::EndMenu();
+            }
+            if (ImGui::MenuItem("Open Demo Level")) request(Pending::Demo);
             ImGui::Separator();
-            if (ImGui::MenuItem("Exit", "Alt+F4")) quit = true;
+            const bool editing = play == PlayState::Editing;
+            if (ImGui::MenuItem("Save", "Ctrl+S", false, editing)) save();
+            if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S", false, editing)) open_dialog(DialogMode::Save);
+            ImGui::Separator();
+            if (ImGui::MenuItem("Exit", "Alt+F4")) request(Pending::Quit);
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Edit")) {
@@ -469,6 +760,8 @@ struct EditorApp::Impl {
             if (ImGui::BeginMenuBar()) {
                 const char* state = play == PlayState::Playing ? "Playing" : play == PlayState::Paused ? "Paused" : "Editing";
                 ImGui::Text("%s", state);
+                ImGui::Separator();
+                ImGui::Text("%s%s", level_name().c_str(), dirty() ? " (modified)" : "");
                 ImGui::Separator();
                 ImGui::Text("%zu entities", world->entity_count());
                 ImGui::Separator();
@@ -993,7 +1286,8 @@ struct EditorApp::Impl {
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("Transform only; use as a group or pivot");
         ImGui::Spacing();
         ImGui::TextDisabled("Levels");
-        if (ImGui::Button("Open Demo Level", ImVec2(w, 0))) load_demo();
+        if (ImGui::Button("Open Demo Level", ImVec2(w, 0))) request(Pending::Demo);
+        if (ImGui::Button("Open Level...", ImVec2(w, 0))) request(Pending::Open);
         ImGui::End();
     }
 
@@ -1074,6 +1368,11 @@ world::World& EditorApp::world() { return *impl_->world; }
 render::Camera EditorApp::camera() const { return impl_->cam.to_render_camera(); }
 void EditorApp::set_frame_stats(const render::FrameStats& stats) { impl_->last_stats = stats; }
 bool EditorApp::quit_requested() const { return impl_->quit; }
+void EditorApp::request_quit() { impl_->request(Impl::Pending::Quit); }
+void EditorApp::open_level(const std::filesystem::path& path) { impl_->request(Impl::Pending::Open, path); }
+std::string EditorApp::window_title() const {
+    return "Aether Editor - " + impl_->level_name() + (impl_->dirty() ? " *" : "");
+}
 void EditorApp::new_level() { impl_->new_level(); }
 void EditorApp::load_demo_level() { impl_->load_demo(); }
 
