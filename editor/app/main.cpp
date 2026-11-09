@@ -1,7 +1,8 @@
 // Aether Editor executable: window, ImGui context and renderer set-up, then
 // the frame loop driving EditorApp.
 //
-// Usage: aether_editor [--frames N] [--validation] [--no-vsync]
+// Usage: aether_editor [level.alevel] [--frames N] [--validation] [--no-vsync]
+//        aether_editor --export-demo <path.alevel>   (writes the demo level, no window)
 #include <vulkan/vulkan_core.h>
 #include <GLFW/glfw3.h>
 #include <imgui.h>
@@ -13,8 +14,12 @@
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <filesystem>
+#include <string>
 #include <string_view>
+#include <vector>
 
+#include "aether/editor/demo_scene.hpp"
 #include "aether/editor/editor_app.hpp"
 #include "aether/foundation/log.hpp"
 #include "aether/foundation/time.hpp"
@@ -23,14 +28,26 @@
 
 using namespace aether;
 
+namespace {
+std::vector<std::filesystem::path> g_dropped;  // filled by the GLFW drop callback
+}
+
 int main(int argc, char** argv) {
     long max_frames = -1;
     bool validation = false, vsync = true;
+    std::filesystem::path open_path;
     for (int i = 1; i < argc; ++i) {
         const std::string_view a = argv[i];
         if (a == "--frames" && i + 1 < argc) max_frames = std::strtol(argv[++i], nullptr, 10);
         else if (a == "--validation") validation = true;
         else if (a == "--no-vsync") vsync = false;
+        else if (a == "--export-demo" && i + 1 < argc) {
+            const auto r = editor::save_demo_level(argv[++i]);
+            if (!r) std::fprintf(stderr, "export failed: %s\n", r.error().message.c_str());
+            return r ? 0 : 1;
+        } else if (!a.empty() && a[0] != '-') {
+            open_path = std::filesystem::path(std::string(a));
+        }
     }
 
     Logger logger;
@@ -105,10 +122,31 @@ int main(int argc, char** argv) {
             });
 
             editor::EditorApp app(*renderer, logger, memory_log);
+            if (!open_path.empty()) app.open_level(open_path);
+            glfwSetDropCallback(window, [](GLFWwindow*, int count, const char** paths) {
+                for (int i = 0; i < count; ++i)
+                    g_dropped.push_back(std::filesystem::path(
+                        std::u8string(reinterpret_cast<const char8_t*>(paths[i]))));  // GLFW gives UTF-8
+            });
             Stopwatch clock;
             long frames = 0;
-            while (!glfwWindowShouldClose(window) && !app.quit_requested()) {
+            std::string title;
+            while (!app.quit_requested()) {
                 glfwPollEvents();
+                if (glfwWindowShouldClose(window)) {  // ask about unsaved changes instead of closing
+                    glfwSetWindowShouldClose(window, GLFW_FALSE);
+                    app.request_quit();
+                }
+                for (const auto& p : g_dropped)
+                    if (p.extension() == ".alevel") {
+                        app.open_level(p);
+                        break;
+                    }
+                g_dropped.clear();
+                if (const std::string t = app.window_title(); t != title) {
+                    title = t;
+                    glfwSetWindowTitle(window, title.c_str());
+                }
                 if (glfwGetWindowAttrib(window, GLFW_ICONIFIED)) {
                     glfwWaitEventsTimeout(0.1);
                     continue;

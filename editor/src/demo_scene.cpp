@@ -2,12 +2,14 @@
 
 #include <string>
 
-#include "aether/editor/components.hpp"
+#include "aether/gameplay/spin.hpp"
+#include "aether/render/mesh_registry.hpp"
 #include "aether/world/hierarchy.hpp"
 #include "aether/world/name.hpp"
 
 namespace aether::editor {
 
+using gameplay::Spin;
 using math::Quat;
 using math::Vec3;
 
@@ -61,6 +63,22 @@ void build_demo_scene(world::World& w, render::MeshId cube) {
     w.get<world::Transform>(floor)->scale = {50, 0.1f, 50};  // matches the 50 m editor grid
     w.add<render::MeshInstance>(floor, render::MeshInstance{cube, {0.09f, 0.095f, 0.105f}});
     world::propagate_transforms(w);
+}
+
+Result<void> save_demo_level(const std::filesystem::path& path) {
+    world::World w({.seed = 20261109});  // fixed seed: the same file every time
+    render::MeshRegistry meshes;
+    meshes.add(std::string(render::kBuiltinCube), 0);
+    build_demo_scene(w, 0);
+    world::SerializerRegistry registry;
+    register_level_components(registry, meshes);
+    return world::save_level_file(path, w, registry, "Aether Editor demo export");
+}
+
+void register_level_components(world::SerializerRegistry& registry, const render::MeshRegistry& meshes) {
+    world::register_core_components(registry);
+    render::register_components(registry, meshes);
+    gameplay::register_components(registry);
 }
 
 }  // namespace aether::editor

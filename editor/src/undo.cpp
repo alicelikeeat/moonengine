@@ -9,6 +9,7 @@ namespace aether::editor {
 void UndoStack::push(Command command) {
     undone_.clear();
     done_.push_back(std::move(command));
+    ++revision_;
     if (done_.size() > limit_) done_.erase(done_.begin());
 }
 
@@ -18,6 +19,7 @@ bool UndoStack::undo(world::World& world) {
     done_.pop_back();
     c.undo(world);
     undone_.push_back(std::move(c));
+    ++revision_;
     return true;
 }
 
@@ -27,6 +29,7 @@ bool UndoStack::redo(world::World& world) {
     undone_.pop_back();
     c.redo(world);
     done_.push_back(std::move(c));
+    ++revision_;
     return true;
 }
 

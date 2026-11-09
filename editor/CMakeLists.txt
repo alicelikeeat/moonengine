@@ -10,16 +10,19 @@ aether_add_module(editor
     DEPENDS
         foundation
         world
-        render)
+        render
+        gameplay)
 target_link_libraries(aether_editor PRIVATE aether_imgui aether_imguizmo)
 
 if(AETHER_BUILD_TESTS)
     aether_add_test(aether_editor_tests
         SOURCES
             tests/test_camera_picking.cpp
+            tests/test_level_files.cpp
             tests/test_snapshot_undo.cpp
         LINK
             Aether::editor)
+    target_compile_definitions(aether_editor_tests PRIVATE AETHER_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 endif()
 
 if(AETHER_BUILD_SAMPLES)
