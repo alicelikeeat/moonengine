@@ -3,3 +3,4 @@
 add_subdirectory(foundation)
 add_subdirectory(world)
 add_subdirectory(render)
+add_subdirectory(gameplay)
