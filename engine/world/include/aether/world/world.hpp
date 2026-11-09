@@ -93,6 +93,18 @@ public:
     [[nodiscard]] T* get(Entity e) noexcept;
     template <Component T>
     [[nodiscard]] const T* get(Entity e) const noexcept;
+    // Faster variants for hot loops: `id` must be component_id<T>(), resolved
+    // once by the caller. Skips the type-to-id hash lookup.
+    template <Component T>
+    [[nodiscard]] T* get(Entity e, ComponentId id) noexcept {
+        return static_cast<T*>(get_raw(e, id));
+    }
+    template <Component T>
+    [[nodiscard]] const T* get(Entity e, ComponentId id) const noexcept {
+        return static_cast<const T*>(get_raw(e, id));
+    }
+    [[nodiscard]] void* get_raw(Entity e, ComponentId id) const noexcept;
+
     template <Component T>
     [[nodiscard]] bool has(Entity e) const noexcept { return get<T>(e) != nullptr; }
     [[nodiscard]] bool has(Entity e, ComponentId id) const noexcept;

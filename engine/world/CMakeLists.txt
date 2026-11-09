@@ -1,6 +1,7 @@
 aether_add_module(world
     SOURCES
         src/archetype.cpp
+        src/hierarchy.cpp
         src/schedule.cpp
         src/world.cpp
     DEPENDS
@@ -11,6 +12,7 @@ if(AETHER_BUILD_TESTS)
         SOURCES
             tests/test_command_buffer.cpp
             tests/test_entities.cpp
+            tests/test_hierarchy.cpp
             tests/test_queries.cpp
             tests/test_schedule.cpp
             tests/test_world_fuzz.cpp

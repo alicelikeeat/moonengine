@@ -20,6 +20,7 @@ if(AETHER_BUILD_TESTS)
             tests/test_job_system.cpp
             tests/test_lifecycle.cpp
             tests/test_log_trace.cpp
+            tests/test_math.cpp
             tests/test_memory.cpp
             tests/test_result.cpp
             tests/test_time.cpp

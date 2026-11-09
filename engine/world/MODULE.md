@@ -17,6 +17,9 @@
 | `ComponentInfo` | Name, size, alignment and lifetime operations for each component type. |
 | `CommandBuffer` | Deferred create/destroy/add/remove, applied in order. |
 | `Schedule`, `SystemAccess`, `SystemContext` | Systems with declared read/write access, run in parallel waves. |
+| `Transform`, `GlobalTransform`, `Parent`, `Children` | Scene hierarchy components ([ADR 0008](../../docs/adr/0008-scene-hierarchy.md)). |
+| `hierarchy::set_parent`, `clear_parent`, `destroy_recursive`, `validate` | Keep both sides of parent/child links consistent; reject cycles. |
+| `propagate_transforms` | Computes world matrices root to leaf, optionally in parallel. |
 
 ## Contracts
 
@@ -26,6 +29,9 @@
 - Inside a `Schedule`, a system can only query components it declared; `const T` needs read access, `T` needs write access.
 - Command buffers from one `Schedule::run` are applied after the last wave, in system registration order.
 - Entity handles are not persistent. Save the `Uuid`.
+- Change parent/child links only through `hierarchy::` functions. An entity whose parent is dead is treated as a root.
+- `GlobalTransform` is written by `propagate_transforms`; treat it as read-only elsewhere.
+- Hot loops can resolve a `ComponentId` once and call `get<T>(entity, id)` to skip the type lookup.
 
 ## Thread-safety summary
 
@@ -37,4 +43,4 @@
 
 ## Not yet implemented
 
-Scene hierarchy and transforms, serialization format v1 with migrations, world partition and streaming, floating origin, prefabs, batched entity creation. See `ROADMAP.md`.
+Serialization format v1 with migrations, world partition and streaming, floating origin, prefabs, batched entity creation, change detection and depth-sorted transform propagation. See `ROADMAP.md`.

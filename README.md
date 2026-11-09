@@ -12,10 +12,10 @@ This is a young project. Here is exactly what exists today and what does not.
 | --- | --- |
 | Governance, licence, contribution process (DCO) | ✅ Done |
 | CMake build, presets, CI (GCC, Clang, MSVC, ASan/UBSan, TSan) | ✅ Done |
-| Foundation: allocators, work-stealing jobs, logging, tracing, time, lifecycle, UUIDs | ✅ Implemented and tested (36 tests) |
-| World: archetype ECS, queries, command buffers, parallel system schedule | ✅ Implemented and tested (21 tests) |
+| Foundation: allocators, work-stealing jobs, logging, tracing, time, lifecycle, UUIDs, math | ✅ Implemented and tested (41 tests) |
+| World: archetype ECS, queries, command buffers, parallel system schedule, scene hierarchy, transforms | ✅ Implemented and tested (30 tests) |
 | Aether Control Protocol (ACP) for tools and AI agents | 📝 Draft 0.1 schemas + validator |
-| Scene hierarchy and save format, Render (Vulkan), Assets, Editor, Physics, Animation, AI agents | ⏳ Not started — see [ROADMAP.md](ROADMAP.md) |
+| Scene save format, Render (Vulkan), Assets, Editor, Physics, Animation, AI agents | ⏳ Not started — see [ROADMAP.md](ROADMAP.md) |
 
 There is no renderer or editor yet. Claims about performance versus other engines will only be made with published, reproducible benchmarks.
 

@@ -21,6 +21,7 @@ Foundation
 - [x] Chrome-trace performance tracing
 - [x] Fixed-step clock, lifecycle state machine
 - [x] v4 UUIDs
+- [x] Math library (Vec3, Quat, Mat4)
 - [ ] Async file I/O and resource handles
 - [ ] Crash handler with per-thread stack capture and minidumps
 - [ ] Lock-free work-stealing deque (current deques are mutex-based; ~0.8 µs per empty job on a 4-thread VM)
@@ -31,7 +32,8 @@ World
 - [x] Named components (addressable by tools and ACP), deferred command buffers
 - [x] System schedule with declared access and parallel waves
 - [ ] Batched entity creation (creation is ≈ 630 ns/entity with 2 components today)
-- [ ] Scene hierarchy and transform propagation
+- [x] Scene hierarchy (two-way parent/child links, cycle rejection, validation) and transform propagation
+- [ ] Faster propagation: change detection, depth-sorted storage (≈ 156 ns/entity serial today)
 - [ ] Serialization format v1 (documented), version migration hooks
 
 Render
