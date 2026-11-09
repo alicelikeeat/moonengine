@@ -2,3 +2,4 @@
 # implementation and tests. See docs/architecture/overview.md for the layering.
 add_subdirectory(foundation)
 add_subdirectory(world)
+add_subdirectory(render)

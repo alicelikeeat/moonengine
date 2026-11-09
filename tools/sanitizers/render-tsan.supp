@@ -1,0 +1,8 @@
+# ThreadSanitizer suppressions for render tests only.
+#
+# llvmpipe runs its own worker threads and synchronises them in ways TSan
+# cannot see into (the driver is not instrumented). Reports whose stacks
+# are inside the driver or LLVM are suppressed; races in Aether code still
+# fail the build.
+race:libvulkan_lvp.so
+race:libLLVM
