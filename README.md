@@ -4,7 +4,7 @@
 
 > 完全开源 · AI 原生 · 下一代 3D 游戏引擎。Apache-2.0 许可，无版税、无席位费、无需账号或联网验证，可完全离线构建与运行。
 
-## Status: early development (milestone M0, start of M1)
+## Status: early development (M1 core, M2 editor started)
 
 This is a young project. Here is exactly what exists today and what does not.
 
@@ -16,10 +16,11 @@ This is a young project. Here is exactly what exists today and what does not.
 | World: archetype ECS, queries, command buffers, parallel system schedule, scene hierarchy, transforms | ✅ Implemented and tested (30 tests) |
 | Aether Control Protocol (ACP) for tools and AI agents | 📝 Draft 0.1 schemas + validator |
 | Render: Vulkan 1.3 renderer, windowed and headless | ✅ First slice, tested on software Vulkan (8 tests) |
-| Sample app: `samples/spinning_cubes` (Windows `.exe` from CI) | ✅ Runs; needs a Vulkan 1.3 GPU driver |
-| Scene save format, materials, Assets, Editor, Physics, Animation, AI agents | ⏳ Not started — see [ROADMAP.md](ROADMAP.md) |
+| Editor: viewport + gizmos, outliner, details, undo/redo, play-in-editor | ✅ First version (11 tests) — cannot save levels yet |
+| Sample app: `samples/spinning_cubes` | ✅ Runs; needs a Vulkan 1.3 GPU driver |
+| Scene save format, materials, Assets, Physics, Animation, AI agents | ⏳ Not started — see [ROADMAP.md](ROADMAP.md) |
 
-There is a first renderer and a demo program, but no editor yet. Claims about performance versus other engines will only be made with published, reproducible benchmarks.
+There is a first renderer, a level editor and a demo program; levels cannot be saved yet. Claims about performance versus other engines will only be made with published, reproducible benchmarks.
 
 ## Principles
 
@@ -31,7 +32,7 @@ There is a first renderer and a demo program, but no editor yet. Claims about pe
 
 ## Download
 
-The latest preview build of the Windows demo is on the [Releases page](https://github.com/alicelikeeat/moonengine/releases). It needs a Vulkan 1.3 GPU driver.
+The latest preview build of the Windows editor and demo is on the [Releases page](https://github.com/alicelikeeat/moonengine/releases). It needs a Vulkan 1.3 GPU driver.
 
 ## Quick start
 
@@ -54,6 +55,7 @@ Full instructions: [docs/building.md](docs/building.md).
 | `engine/foundation` | Core runtime: memory, jobs, logging, tracing, time, lifecycle, UUIDs |
 | `engine/world` | Entity component system: entities, components, queries, systems |
 | `engine/render` | Renderer interface and Vulkan backend |
+| `editor` | Level editor (`aether_editor`) |
 | `samples` | Runnable demo programs |
 | `protocols/acp` | Aether Control Protocol schemas, examples and spec |
 | `tests/support` | Dependency-free unit test harness |
@@ -62,7 +64,7 @@ Full instructions: [docs/building.md](docs/building.md).
 | `tools` | Protocol validator, DCO checker |
 | `third_party` | Dependency manifest and licence records |
 
-Directories for Editor, Intelligence and the other systems are added when they have working code and tests, not before. The planned layout is in [docs/architecture/overview.md](docs/architecture/overview.md).
+Directories for Intelligence and the other systems are added when they have working code and tests, not before. The planned layout is in [docs/architecture/overview.md](docs/architecture/overview.md).
 
 ## Contributing
 

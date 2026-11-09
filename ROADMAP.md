@@ -44,8 +44,13 @@ Render
 - [ ] Device-local memory with staging uploads; memory allocator
 - [ ] Render graph; forward+ clustered PBR; materials and textures; shadows
 
-## M2 — Editable 3D scenes
-glTF 2.0 import, content-hashed asset database, materials, scene save/load, editor shell with viewport, hierarchy, inspector, undo/redo.
+## M2 — Editable 3D scenes · 🚧 Started
+
+- [x] Editor shell: docking layout, viewport with gizmos and picking, outliner, details, place actors, log, stats (v0.2.0)
+- [x] Undo/redo, duplicate, drag-and-drop attach, play-in-editor
+- [ ] Scene save/load (scene format v1)
+- [ ] glTF 2.0 import, content-hashed asset database, content browser
+- [ ] Materials and textures; reflection-driven inspectors; multi-selection
 
 ## M3 — AI-native workflow
 ACP server over stdio and loopback WebSocket; scene query, transactional edits, rollback; model provider interface with a no-AI mode and a local open-weights provider; agent roles (planner, implementer, reviewer, tester) with budget and audit logs.

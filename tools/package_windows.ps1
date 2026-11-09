@@ -1,10 +1,10 @@
-# Packages the Windows demo for distribution. Used by both CI (every PR) and
+# Packages the Windows editor and demo for distribution. Used by both CI (every PR) and
 # the release workflow, so the release packaging is tested before tagging.
 #
 #   pwsh tools/package_windows.ps1 -Version v0.1.0 -OutDir dist
 #
 # Produces in OutDir:
-#   aether-engine-<Version>-windows-x64.zip   exe, LICENSE, NOTICE, licences, README, BUILD_INFO
+#   aether-engine-<Version>-windows-x64.zip   editor + demo exe, LICENSE, NOTICE, licences, README, BUILD_INFO
 #   aether-engine-<Version>-dependencies.json dependency manifest (minimal SBOM)
 #   SHA256SUMS.txt                            checksums of the files above
 param(
@@ -19,10 +19,11 @@ $stage = Join-Path $OutDir $name
 if (Test-Path $OutDir) { Remove-Item -Recurse -Force $OutDir }
 New-Item -ItemType Directory -Force -Path (Join-Path $stage "licenses") | Out-Null
 
+Copy-Item "$BuildDir/editor/Release/aether_editor.exe" $stage
 Copy-Item "$BuildDir/samples/spinning_cubes/Release/aether_spinning_cubes.exe" $stage
 Copy-Item LICENSE, NOTICE $stage
 Copy-Item third_party/licenses/* (Join-Path $stage "licenses")
-Copy-Item samples/spinning_cubes/README.md (Join-Path $stage "README.md")
+Copy-Item docs/user/quick-start.md (Join-Path $stage "README.md")
 $info = @(
     "version: $Version"
     "commit: $env:GITHUB_SHA"

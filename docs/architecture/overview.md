@@ -16,7 +16,7 @@ Dependencies only point **down** the layers. The rule is enforced at configure t
 | 2 | Animation | `engine/animation` | Skeletons, animation graph, IK | Planned (M4) |
 | 3 | Gameplay | `engine/gameplay` | Scripting, events, game logic | Planned (M4) |
 | 4 | Intelligence | `intelligence` | Model providers, agents, ACP tools | Planned (M3) |
-| 5 | Editor | `editor` | Editing UI, debugging, profiling | Planned (M2) |
+| 5 | Editor | `editor` | Editing UI, debugging, profiling | **First version: level editor** |
 
 Rules:
 
@@ -51,6 +51,10 @@ Archetype ECS ([ADR 0007](../adr/0007-archetype-ecs.md)): generational `Entity` 
 ## Render today
 
 A Vulkan 1.3 renderer behind a backend-neutral `Renderer` interface ([ADR 0009](../adr/0009-first-vulkan-renderer.md)): windowed or headless, draws entities with `GlobalTransform` + `MeshInstance`. The `samples/spinning_cubes` program ties ECS, systems, hierarchy and rendering together. Details in [`engine/render/MODULE.md`](../../engine/render/MODULE.md).
+
+## Editor today
+
+A docking level editor on Dear ImGui ([ADR 0010](../adr/0010-editor-ui-dear-imgui.md)): viewport with gizmos and picking, outliner, details, undo/redo and play-in-editor. See [`editor/MODULE.md`](../../editor/MODULE.md).
 
 ## Verification
 
