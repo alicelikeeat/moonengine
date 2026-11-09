@@ -48,7 +48,7 @@ Render
 
 - [x] Editor shell: docking layout, viewport with gizmos and picking, outliner, details, place actors, log, stats (v0.2.0)
 - [x] Undo/redo, duplicate, drag-and-drop attach, play-in-editor
-- [ ] Scene save/load (scene format v1)
+- [x] Scene save/load: documented JSON level format v1 with schema, migrations, unknown-data preservation (v0.3.0)
 - [ ] glTF 2.0 import, content-hashed asset database, content browser
 - [ ] Materials and textures; reflection-driven inspectors; multi-selection
 

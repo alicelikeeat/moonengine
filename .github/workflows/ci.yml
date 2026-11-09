@@ -68,7 +68,9 @@ jobs:
 
       - name: Smoke-test the windowed sample (virtual display, software Vulkan)
         if: matrix.preset == 'linux-gcc'
-        run: xvfb-run -a ./build/linux-gcc/samples/spinning_cubes/aether_spinning_cubes --frames 120 --validation
+        run: |
+          xvfb-run -a ./build/linux-gcc/samples/spinning_cubes/aether_spinning_cubes --frames 120 --validation
+          xvfb-run -a ./build/linux-gcc/samples/spinning_cubes/aether_spinning_cubes --level samples/levels/solar_system.alevel --frames 60 --validation
 
       - name: Smoke-test the editor (virtual display, software Vulkan)
         if: matrix.preset == 'linux-gcc'
