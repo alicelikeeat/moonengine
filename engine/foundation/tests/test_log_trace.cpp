@@ -1,5 +1,6 @@
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -8,6 +9,14 @@
 #include "aether_test.hpp"
 
 using namespace aether;
+
+namespace {
+// Raw string literals stay outside CHECK(...): MSVC's traditional
+// preprocessor mis-tokenizes them inside macro arguments.
+bool contains(const std::string& haystack, std::string_view needle) {
+    return haystack.find(needle) != std::string::npos;
+}
+}  // namespace
 
 AETHER_TEST(logger_filters_by_level) {
     Logger log;
@@ -29,9 +38,12 @@ AETHER_TEST(json_sink_escapes_text) {
     log.add_sink(std::make_shared<JsonLinesSink>(out));
     log.log(LogLevel::Info, "io", "path \"C:\\x\"\nnext", "file.cpp", 7);
     const std::string s = out.str();
-    CHECK(s.find(R"("message":"path \"C:\\x\"\nnext")") != std::string::npos);
-    CHECK(s.find(R"("level":"info")") != std::string::npos);
-    CHECK(s.find(R"("line":7)") != std::string::npos);
+    constexpr std::string_view kMessage = R"("message":"path \"C:\\x\"\nnext")";
+    constexpr std::string_view kLevel = R"("level":"info")";
+    constexpr std::string_view kLine = R"("line":7)";
+    CHECK(contains(s, kMessage));
+    CHECK(contains(s, kLevel));
+    CHECK(contains(s, kLine));
     CHECK(s.back() == '\n');
 }
 
@@ -71,7 +83,8 @@ AETHER_TEST(trace_exports_chrome_json) {
     const std::string json = out.str();
     CHECK(json.rfind("{\"traceEvents\":[", 0) == 0);
     CHECK(json.find("\"ph\":\"X\"") != std::string::npos);
-    CHECK(json.find(R"(render \"main\")") != std::string::npos);
+    constexpr std::string_view kEscapedName = R"(render \"main\")";
+    CHECK(contains(json, kEscapedName));
 }
 
 AETHER_TEST(trace_respects_capacity_and_enable) {
