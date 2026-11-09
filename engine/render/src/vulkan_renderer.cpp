@@ -6,6 +6,9 @@
 // culling and a real memory allocator are on the roadmap).
 #include <volk.h>
 
+#include <imgui.h>
+#include <imgui_impl_vulkan.h>
+
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -23,6 +26,13 @@ namespace {
 constexpr std::uint32_t kFramesInFlight = 2;
 constexpr VkFormat kDepthFormat = VK_FORMAT_D32_SFLOAT;
 constexpr VkFormat kOffscreenFormat = VK_FORMAT_R8G8B8A8_UNORM;
+// UI mode: the scene is rendered through an sRGB view (hardware encodes
+// linear shader output) and sampled by ImGui through a UNORM view of the
+// same image (no decode), then written to a UNORM swapchain. ImGui's colours
+// are authored for non-sRGB targets, so this keeps both UI and scene right.
+constexpr VkFormat kViewportRenderFormat = VK_FORMAT_R8G8B8A8_SRGB;
+constexpr VkFormat kViewportSampleFormat = VK_FORMAT_R8G8B8A8_UNORM;
+constexpr float kGridHalfExtent = 1000.0f;  // analytic grid quad; the shader fades it out
 constexpr const char* kValidationLayer = "VK_LAYER_KHRONOS_validation";
 
 struct PushConstants {
@@ -107,7 +117,13 @@ public:
 
     Result<MeshId> upload_mesh(const MeshData& mesh) override;
     void resize(std::uint32_t width, std::uint32_t height) override;
-    Result<FrameStats> render(world::World& world, const Camera& camera) override;
+    using Renderer::render;
+    Result<FrameStats> render(world::World& world, const Camera& camera, const RenderOptions& options) override;
+    void begin_ui_frame() override;
+    void set_viewport_size(std::uint32_t width, std::uint32_t height) override;
+    [[nodiscard]] std::uint64_t viewport_texture() const noexcept override;
+    [[nodiscard]] std::uint32_t viewport_width() const noexcept override { return viewport_extent_.width; }
+    [[nodiscard]] std::uint32_t viewport_height() const noexcept override { return viewport_extent_.height; }
     Result<std::vector<std::uint8_t>> read_pixels() override;
     [[nodiscard]] const GpuInfo& gpu() const noexcept override { return info_; }
     [[nodiscard]] std::uint32_t width() const noexcept override { return extent_.width; }
@@ -133,6 +149,10 @@ private:
     Result<void> create_targets();
     void destroy_targets();
     Result<void> create_swapchain();
+    Result<void> create_grid();
+    Result<void> init_ui();
+    Result<void> create_viewport_target();
+    void destroy_viewport_target();
 
     std::optional<std::uint32_t> find_memory(std::uint32_t type_bits, VkMemoryPropertyFlags props) const;
     Result<Buffer> create_buffer(VkDeviceSize size, VkBufferUsageFlags usage);
@@ -141,8 +161,12 @@ private:
                                VkImageAspectFlags aspect);
     void destroy_image(Image& img);
 
-    void record(VkCommandBuffer cmd, VkImage color, VkImageView color_view, world::World& world,
-                const Camera& camera, FrameStats& stats);
+    // Draws the scene into `color` (left in COLOR_ATTACHMENT_OPTIMAL).
+    void record_scene(VkCommandBuffer cmd, VkImage color, VkImageView color_view, VkExtent2D extent,
+                      world::World& world, const Camera& camera, const RenderOptions& options, FrameStats& stats);
+    static void image_barrier(VkCommandBuffer cmd, VkImage image, VkImageAspectFlags aspect,
+                              VkImageLayout from, VkImageLayout to, VkPipelineStageFlags2 src_stage,
+                              VkAccessFlags2 src_access, VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access);
 
     RendererDesc desc_;
     GpuInfo info_;
@@ -163,7 +187,9 @@ private:
 
     VkPipelineLayout layout_ = VK_NULL_HANDLE;
     VkPipeline pipeline_ = VK_NULL_HANDLE;
-    VkFormat color_format_ = kOffscreenFormat;
+    VkPipeline grid_pipeline_ = VK_NULL_HANDLE;
+    VkFormat scene_format_ = kOffscreenFormat;  // what the scene pipelines render to
+    VkFormat color_format_ = kOffscreenFormat;  // swapchain format
     VkColorSpaceKHR color_space_ = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
 
     VkExtent2D extent_{};
@@ -180,6 +206,17 @@ private:
     bool has_frame_ = false;
 
     std::vector<GpuMesh> meshes_;
+    Buffer grid_;  // 6 vertices: one large quad on the XZ plane
+
+    // UI mode
+    bool ui_ = false;
+    VkDescriptorPool ui_pool_ = VK_NULL_HANDLE;
+    VkSampler sampler_ = VK_NULL_HANDLE;
+    Image viewport_;                                  // view_ is the sRGB render view
+    VkImageView viewport_sample_view_ = VK_NULL_HANDLE;  // UNORM view sampled by ImGui
+    VkDescriptorSet viewport_set_ = VK_NULL_HANDLE;
+    VkExtent2D viewport_extent_{640, 360};
+    VkExtent2D pending_viewport_{640, 360};
 };
 
 // ---- Set-up ----------------------------------------------------------------
@@ -201,8 +238,13 @@ Result<void> VulkanRenderer::init(const RendererDesc& desc) {
     AETHER_TRY(pick_device());
     AETHER_TRY(create_device());
     AETHER_TRY(create_frames());
+    ui_ = desc_.enable_ui;
+    if (ui_ && headless()) return Error{ErrorCode::InvalidArgument, "enable_ui requires a window surface"};
+    if (ui_ && ImGui::GetCurrentContext() == nullptr)
+        return Error{ErrorCode::InvalidState, "enable_ui requires ImGui::CreateContext() before Renderer::create"};
     if (headless()) {
         color_format_ = kOffscreenFormat;
+        scene_format_ = kOffscreenFormat;
     } else {
         // Choose the surface format once; the pipeline is built against it.
         std::uint32_t count = 0;
@@ -212,16 +254,24 @@ Result<void> VulkanRenderer::init(const RendererDesc& desc) {
         if (formats.empty()) return Error{ErrorCode::Unsupported, "surface reports no formats"};
         color_format_ = formats[0].format;
         color_space_ = formats[0].colorSpace;
-        for (const auto& f : formats)
-            if ((f.format == VK_FORMAT_B8G8R8A8_SRGB || f.format == VK_FORMAT_R8G8B8A8_SRGB) &&
-                f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
-                color_format_ = f.format;
-                color_space_ = f.colorSpace;
-                break;
-            }
+        // Without UI the scene goes straight to an sRGB swapchain; with UI
+        // a UNORM swapchain matches how ImGui's colours are authored.
+        const VkFormat wanted[2] = {ui_ ? VK_FORMAT_B8G8R8A8_UNORM : VK_FORMAT_B8G8R8A8_SRGB,
+                                    ui_ ? VK_FORMAT_R8G8B8A8_UNORM : VK_FORMAT_R8G8B8A8_SRGB};
+        bool found = false;
+        for (const VkFormat w : wanted)
+            for (const auto& f : formats)
+                if (!found && f.format == w && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+                    color_format_ = f.format;
+                    color_space_ = f.colorSpace;
+                    found = true;
+                }
+        scene_format_ = ui_ ? kViewportRenderFormat : color_format_;
     }
     AETHER_TRY(create_pipeline());
+    AETHER_TRY(create_grid());
     AETHER_TRY(create_targets());
+    if (ui_) AETHER_TRY(init_ui());
     log(LogLevel::Info, "renderer ready on " + info_.name + " (" + info_.api + ")" +
                             (info_.validation ? ", validation on" : ""));
     return ok();
@@ -486,7 +536,7 @@ Result<void> VulkanRenderer::create_pipeline() {
 
         VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
         rendering.colorAttachmentCount = 1;
-        rendering.pColorAttachmentFormats = &color_format_;
+        rendering.pColorAttachmentFormats = &scene_format_;
         rendering.depthAttachmentFormat = kDepthFormat;
 
         VkGraphicsPipelineCreateInfo info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
@@ -503,6 +553,30 @@ Result<void> VulkanRenderer::create_pipeline() {
         info.pDynamicState = &dynamic;
         info.layout = layout_;
         r = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline_);
+        if (r == VK_SUCCESS) {
+            // Ground grid: same vertex layout and push constants, its own
+            // shaders, alpha-blended, depth-tested but not written.
+            VkShaderModule grid_vert = VK_NULL_HANDLE, grid_frag = VK_NULL_HANDLE;
+            r = make_module(shaders::kGridVertSpv, sizeof(shaders::kGridVertSpv), grid_vert);
+            if (r == VK_SUCCESS) r = make_module(shaders::kGridFragSpv, sizeof(shaders::kGridFragSpv), grid_frag);
+            if (r == VK_SUCCESS) {
+                stages[0].module = grid_vert;
+                stages[1].module = grid_frag;
+                raster.cullMode = VK_CULL_MODE_NONE;
+                depth.depthWriteEnable = VK_FALSE;
+                depth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+                blend_attachment.blendEnable = VK_TRUE;
+                blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+                blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+                blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
+                blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+                blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+                blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+                r = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &info, nullptr, &grid_pipeline_);
+            }
+            if (grid_vert) vkDestroyShaderModule(device_, grid_vert, nullptr);
+            if (grid_frag) vkDestroyShaderModule(device_, grid_frag, nullptr);
+        }
     }
     vkDestroyShaderModule(device_, vert, nullptr);
     vkDestroyShaderModule(device_, frag, nullptr);
@@ -621,6 +695,7 @@ Result<void> VulkanRenderer::create_targets() {
         AETHER_TRY(create_swapchain());
         if (extent_.width == 0 || extent_.height == 0) return ok();  // minimised
     }
+    if (ui_) return ok();  // the viewport target owns the scene depth buffer
     auto depth = create_image(extent_.width, extent_.height, kDepthFormat,
                               VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
     if (!depth) return depth.error();
@@ -629,7 +704,7 @@ Result<void> VulkanRenderer::create_targets() {
 }
 
 void VulkanRenderer::destroy_targets() {
-    destroy_image(depth_);
+    if (!ui_) destroy_image(depth_);
     destroy_image(offscreen_);
     destroy_buffer(readback_);
     for (VkImageView v : swap_views_) vkDestroyImageView(device_, v, nullptr);
@@ -637,6 +712,146 @@ void VulkanRenderer::destroy_targets() {
     swap_views_.clear();
     render_finished_.clear();
     swap_images_.clear();
+}
+
+Result<void> VulkanRenderer::create_grid() {
+    const float e = kGridHalfExtent;
+    const math::Vec3 up{0, 1, 0};
+    const Vertex quad[6] = {{{-e, 0, -e}, up}, {{e, 0, -e}, up}, {{e, 0, e}, up},
+                            {{-e, 0, -e}, up}, {{e, 0, e}, up}, {{-e, 0, e}, up}};
+    auto buf = create_buffer(sizeof(quad), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    if (!buf) return buf.error();
+    grid_ = buf.value();
+    std::memcpy(grid_.mapped, quad, sizeof(quad));
+    return ok();
+}
+
+Result<void> VulkanRenderer::init_ui() {
+    VkSamplerCreateInfo sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    sampler.magFilter = VK_FILTER_LINEAR;
+    sampler.minFilter = VK_FILTER_LINEAR;
+    sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sampler.addressModeU = sampler.addressModeV = sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler.maxLod = 1.0f;
+    AETHER_VK_TRY(vkCreateSampler(device_, &sampler, nullptr, &sampler_));
+
+    const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 64};
+    VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    pool.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    pool.maxSets = 64;
+    pool.poolSizeCount = 1;
+    pool.pPoolSizes = &size;
+    AETHER_VK_TRY(vkCreateDescriptorPool(device_, &pool, nullptr, &ui_pool_));
+
+    ImGui_ImplVulkan_InitInfo info{};
+    info.Instance = instance_;
+    info.PhysicalDevice = physical_;
+    info.Device = device_;
+    info.QueueFamily = queue_family_;
+    info.Queue = queue_;
+    info.DescriptorPool = ui_pool_;
+    info.MinImageCount = 2;
+    info.ImageCount = std::max<std::uint32_t>(2, static_cast<std::uint32_t>(swap_images_.size()));
+    info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    info.UseDynamicRendering = true;
+    info.PipelineRenderingCreateInfo = {VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+    info.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
+    info.PipelineRenderingCreateInfo.pColorAttachmentFormats = &color_format_;
+    if (!ImGui_ImplVulkan_Init(&info)) return Error{ErrorCode::Unknown, "ImGui Vulkan backend failed to initialise"};
+    if (!ImGui_ImplVulkan_CreateFontsTexture()) return Error{ErrorCode::Unknown, "ImGui font upload failed"};
+    return create_viewport_target();
+}
+
+Result<void> VulkanRenderer::create_viewport_target() {
+    const std::uint32_t w = std::max(16u, pending_viewport_.width);
+    const std::uint32_t h = std::max(16u, pending_viewport_.height);
+    viewport_extent_ = {w, h};
+
+    // Created by hand (not create_image) because it needs MUTABLE_FORMAT for
+    // the second, UNORM view.
+    VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    info.flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+    info.imageType = VK_IMAGE_TYPE_2D;
+    info.format = kViewportRenderFormat;
+    info.extent = {w, h, 1};
+    info.mipLevels = 1;
+    info.arrayLayers = 1;
+    info.samples = VK_SAMPLE_COUNT_1_BIT;
+    info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    info.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    AETHER_VK_TRY(vkCreateImage(device_, &info, nullptr, &viewport_.image));
+    VkMemoryRequirements req;
+    vkGetImageMemoryRequirements(device_, viewport_.image, &req);
+    auto type = find_memory(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (!type) type = find_memory(req.memoryTypeBits, 0);
+    if (!type) return Error{ErrorCode::Unsupported, "no memory type for viewport image"};
+    VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    alloc.allocationSize = req.size;
+    alloc.memoryTypeIndex = *type;
+    AETHER_VK_TRY(vkAllocateMemory(device_, &alloc, nullptr, &viewport_.memory));
+    vkBindImageMemory(device_, viewport_.image, viewport_.memory, 0);
+    VkImageViewCreateInfo view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    view.image = viewport_.image;
+    view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view.format = kViewportRenderFormat;
+    view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    AETHER_VK_TRY(vkCreateImageView(device_, &view, nullptr, &viewport_.view));
+    view.format = kViewportSampleFormat;
+    AETHER_VK_TRY(vkCreateImageView(device_, &view, nullptr, &viewport_sample_view_));
+
+    auto depth = create_image(w, h, kDepthFormat, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT);
+    if (!depth) return depth.error();
+    depth_ = depth.value();
+
+    viewport_set_ = ImGui_ImplVulkan_AddTexture(sampler_, viewport_sample_view_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    if (viewport_set_ == VK_NULL_HANDLE) return Error{ErrorCode::Unknown, "could not register viewport texture"};
+
+    // Put the image in its sampled layout so a UI frame that draws it before
+    // the first scene render is still valid.
+    Frame& f = frames_[frame_index_];
+    AETHER_VK_TRY(vkWaitForFences(device_, 1, &f.fence, VK_TRUE, UINT64_MAX));
+    VkCommandBuffer cmd = f.cmd;
+    vkResetCommandBuffer(cmd, 0);
+    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &begin);
+    image_barrier(cmd, viewport_.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                  VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE,
+                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+    vkEndCommandBuffer(cmd);
+    VkCommandBufferSubmitInfo cmd_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO};
+    cmd_info.commandBuffer = cmd;
+    VkSubmitInfo2 submit{VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
+    submit.commandBufferInfoCount = 1;
+    submit.pCommandBufferInfos = &cmd_info;
+    AETHER_VK_TRY(vkResetFences(device_, 1, &f.fence));
+    AETHER_VK_TRY(vkQueueSubmit2(queue_, 1, &submit, f.fence));
+    AETHER_VK_TRY(vkWaitForFences(device_, 1, &f.fence, VK_TRUE, UINT64_MAX));
+    return ok();
+}
+
+void VulkanRenderer::destroy_viewport_target() {
+    if (viewport_set_) ImGui_ImplVulkan_RemoveTexture(viewport_set_);
+    viewport_set_ = VK_NULL_HANDLE;
+    if (viewport_sample_view_) vkDestroyImageView(device_, viewport_sample_view_, nullptr);
+    viewport_sample_view_ = VK_NULL_HANDLE;
+    destroy_image(viewport_);
+    destroy_image(depth_);
+}
+
+void VulkanRenderer::begin_ui_frame() {
+    if (ui_) ImGui_ImplVulkan_NewFrame();
+}
+
+void VulkanRenderer::set_viewport_size(std::uint32_t w, std::uint32_t h) {
+    pending_viewport_ = {std::max(16u, w), std::max(16u, h)};
+}
+
+std::uint64_t VulkanRenderer::viewport_texture() const noexcept {
+    std::uint64_t id = 0;
+    static_assert(sizeof(VkDescriptorSet) == sizeof(std::uint64_t), "64-bit targets only");
+    std::memcpy(&id, &viewport_set_, sizeof(id));
+    return id;
 }
 
 Result<void> VulkanRenderer::create_swapchain() {
@@ -738,39 +953,43 @@ void VulkanRenderer::resize(std::uint32_t w, std::uint32_t h) {
 
 // ---- Frame -----------------------------------------------------------------
 
-void VulkanRenderer::record(VkCommandBuffer cmd, VkImage color, VkImageView color_view, world::World& world,
-                            const Camera& camera, FrameStats& stats) {
-    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &begin);
-
-    VkImageMemoryBarrier2 to_render[2]{};
-    to_render[0] = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
-    to_render[0].srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-    to_render[0].dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-    to_render[0].dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
-    to_render[0].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    to_render[0].newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    to_render[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    to_render[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    to_render[0].image = color;
-    to_render[0].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    to_render[1] = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
-    to_render[1].srcStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
-    to_render[1].srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    to_render[1].dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
-    to_render[1].dstAccessMask =
-        VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    to_render[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    to_render[1].newLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-    to_render[1].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    to_render[1].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    to_render[1].image = depth_.image;
-    to_render[1].subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+void VulkanRenderer::image_barrier(VkCommandBuffer cmd, VkImage image, VkImageAspectFlags aspect,
+                                   VkImageLayout from, VkImageLayout to, VkPipelineStageFlags2 src_stage,
+                                   VkAccessFlags2 src_access, VkPipelineStageFlags2 dst_stage,
+                                   VkAccessFlags2 dst_access) {
+    VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+    b.srcStageMask = src_stage;
+    b.srcAccessMask = src_access;
+    b.dstStageMask = dst_stage;
+    b.dstAccessMask = dst_access;
+    b.oldLayout = from;
+    b.newLayout = to;
+    b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.image = image;
+    b.subresourceRange = {aspect, 0, 1, 0, 1};
     VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-    dep.imageMemoryBarrierCount = 2;
-    dep.pImageMemoryBarriers = to_render;
+    dep.imageMemoryBarrierCount = 1;
+    dep.pImageMemoryBarriers = &b;
     vkCmdPipelineBarrier2(cmd, &dep);
+}
+
+void VulkanRenderer::record_scene(VkCommandBuffer cmd, VkImage color, VkImageView color_view, VkExtent2D extent,
+                                  world::World& world, const Camera& camera, const RenderOptions& options,
+                                  FrameStats& stats) {
+    constexpr VkPipelineStageFlags2 kDepthStages =
+        VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+    // The previous frame may still be writing (or, in UI mode, sampling) this
+    // image; waiting on those stages makes reuse safe.
+    image_barrier(cmd, color, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                  VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                  VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+    image_barrier(cmd, depth_.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                  VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, kDepthStages,
+                  VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, kDepthStages,
+                  VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
 
     VkRenderingAttachmentInfo color_att{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
     color_att.imageView = color_view;
@@ -785,24 +1004,25 @@ void VulkanRenderer::record(VkCommandBuffer cmd, VkImage color, VkImageView colo
     depth_att.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     depth_att.clearValue.depthStencil = {1.0f, 0};
     VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO};
-    rendering.renderArea = {{0, 0}, extent_};
+    rendering.renderArea = {{0, 0}, extent};
     rendering.layerCount = 1;
     rendering.colorAttachmentCount = 1;
     rendering.pColorAttachments = &color_att;
     rendering.pDepthAttachment = &depth_att;
     vkCmdBeginRendering(cmd, &rendering);
 
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
-    const VkViewport viewport{0, 0, static_cast<float>(extent_.width), static_cast<float>(extent_.height), 0, 1};
-    const VkRect2D scissor{{0, 0}, extent_};
+    const VkViewport viewport{0, 0, static_cast<float>(extent.width), static_cast<float>(extent.height), 0, 1};
+    const VkRect2D scissor{{0, 0}, extent};
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
-
     const math::Mat4 view_proj =
-        view_projection(camera, static_cast<float>(extent_.width) / static_cast<float>(extent_.height));
+        view_projection(camera, static_cast<float>(extent.width) / static_cast<float>(extent.height));
+    constexpr VkShaderStageFlags kPushStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
     MeshId bound = static_cast<MeshId>(-1);
     world.each<const world::GlobalTransform, const MeshInstance>(
-        [&](const world::GlobalTransform& g, const MeshInstance& inst) {
+        [&](world::Entity entity, const world::GlobalTransform& g, const MeshInstance& inst) {
             if (inst.mesh >= meshes_.size()) return;
             const GpuMesh& mesh = meshes_[inst.mesh];
             if (inst.mesh != bound) {
@@ -831,35 +1051,55 @@ void VulkanRenderer::record(VkCommandBuffer cmd, VkImage color, VkImageView colo
             pc.color[0] = inst.color.x;
             pc.color[1] = inst.color.y;
             pc.color[2] = inst.color.z;
-            pc.color[3] = 1.0f;
-            vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                               sizeof(pc), &pc);
+            pc.color[3] = entity == options.highlight ? 1.0f : 0.0f;
+            vkCmdPushConstants(cmd, layout_, kPushStages, 0, sizeof(pc), &pc);
             vkCmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0);
             ++stats.draws;
         });
-    vkCmdEndRendering(cmd);
 
-    VkImageMemoryBarrier2 after{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
-    after.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-    after.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
-    after.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    after.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    after.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    after.image = color;
-    after.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-    VkDependencyInfo after_dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-    after_dep.imageMemoryBarrierCount = 1;
-    after_dep.pImageMemoryBarriers = &after;
+    // Grid last: it is blended over opaque geometry and the sky.
+    if (options.grid) {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, grid_pipeline_);
+        const VkDeviceSize offset = 0;
+        vkCmdBindVertexBuffers(cmd, 0, 1, &grid_.buffer, &offset);
+        PushConstants pc{};
+        std::memcpy(pc.mvp, view_proj.m, sizeof(pc.mvp));
+        pc.normal0[0] = camera.position.x;
+        pc.normal0[1] = camera.position.y;
+        pc.normal0[2] = camera.position.z;
+        vkCmdPushConstants(cmd, layout_, kPushStages, 0, sizeof(pc), &pc);
+        vkCmdDraw(cmd, 6, 1, 0, 0);
+    }
+    vkCmdEndRendering(cmd);
+}
+
+Result<FrameStats> VulkanRenderer::render(world::World& world, const Camera& camera, const RenderOptions& options) {
+    FrameStats stats;
+    Frame& frame = frames_[frame_index_];
+    VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
     if (headless()) {
-        after.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
-        after.dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
-        after.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        vkCmdPipelineBarrier2(cmd, &after_dep);
+        if (swapchain_dirty_) {  // resize() of the offscreen target
+            vkDeviceWaitIdle(device_);
+            destroy_targets();
+            AETHER_TRY(create_targets());
+            swapchain_dirty_ = false;
+        }
+        AETHER_VK_TRY(vkWaitForFences(device_, 1, &frame.fence, VK_TRUE, UINT64_MAX));
+        AETHER_VK_TRY(vkResetFences(device_, 1, &frame.fence));
+        vkResetCommandBuffer(frame.cmd, 0);
+        vkBeginCommandBuffer(frame.cmd, &begin);
+        record_scene(frame.cmd, offscreen_.image, offscreen_.view, extent_, world, camera, options, stats);
+        image_barrier(frame.cmd, offscreen_.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT,
+                      VK_ACCESS_2_TRANSFER_READ_BIT);
         VkBufferImageCopy region{};
         region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
         region.imageExtent = {extent_.width, extent_.height, 1};
-        vkCmdCopyImageToBuffer(cmd, color, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback_.buffer, 1, &region);
+        vkCmdCopyImageToBuffer(frame.cmd, offscreen_.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback_.buffer, 1,
+                               &region);
         VkBufferMemoryBarrier2 to_host{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2};
         to_host.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
         to_host.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
@@ -872,31 +1112,8 @@ void VulkanRenderer::record(VkCommandBuffer cmd, VkImage color, VkImageView colo
         VkDependencyInfo host_dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
         host_dep.bufferMemoryBarrierCount = 1;
         host_dep.pBufferMemoryBarriers = &to_host;
-        vkCmdPipelineBarrier2(cmd, &host_dep);
-    } else {
-        after.dstStageMask = VK_PIPELINE_STAGE_2_NONE;
-        after.dstAccessMask = VK_ACCESS_2_NONE;
-        after.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-        vkCmdPipelineBarrier2(cmd, &after_dep);
-    }
-    vkEndCommandBuffer(cmd);
-}
-
-Result<FrameStats> VulkanRenderer::render(world::World& world, const Camera& camera) {
-    FrameStats stats;
-    Frame& frame = frames_[frame_index_];
-
-    if (headless()) {
-        if (swapchain_dirty_) {  // resize() of the offscreen target
-            vkDeviceWaitIdle(device_);
-            destroy_targets();
-            AETHER_TRY(create_targets());
-            swapchain_dirty_ = false;
-        }
-        AETHER_VK_TRY(vkWaitForFences(device_, 1, &frame.fence, VK_TRUE, UINT64_MAX));
-        AETHER_VK_TRY(vkResetFences(device_, 1, &frame.fence));
-        vkResetCommandBuffer(frame.cmd, 0);
-        record(frame.cmd, offscreen_.image, offscreen_.view, world, camera, stats);
+        vkCmdPipelineBarrier2(frame.cmd, &host_dep);
+        vkEndCommandBuffer(frame.cmd);
         VkCommandBufferSubmitInfo cmd_info{VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO};
         cmd_info.commandBuffer = frame.cmd;
         VkSubmitInfo2 submit{VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
@@ -914,6 +1131,7 @@ Result<FrameStats> VulkanRenderer::render(world::World& world, const Camera& cam
         vkDeviceWaitIdle(device_);
         destroy_targets();
         AETHER_TRY(create_targets());
+        if (ui_) ImGui_ImplVulkan_SetMinImageCount(2);
         if (swap_images_.empty()) return stats;  // still minimised
     }
 
@@ -929,7 +1147,41 @@ Result<FrameStats> VulkanRenderer::render(world::World& world, const Camera& cam
     // Reset only once work is certain to be submitted, or the next wait deadlocks.
     AETHER_VK_TRY(vkResetFences(device_, 1, &frame.fence));
     vkResetCommandBuffer(frame.cmd, 0);
-    record(frame.cmd, swap_images_[image], swap_views_[image], world, camera, stats);
+    vkBeginCommandBuffer(frame.cmd, &begin);
+
+    if (!ui_) {
+        record_scene(frame.cmd, swap_images_[image], swap_views_[image], extent_, world, camera, options, stats);
+    } else {
+        // 1) Scene into the viewport texture, then make it sampleable.
+        record_scene(frame.cmd, viewport_.image, viewport_.view, viewport_extent_, world, camera, options, stats);
+        image_barrier(frame.cmd, viewport_.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                      VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        // 2) ImGui (which samples the viewport texture) into the swapchain.
+        image_barrier(frame.cmd, swap_images_[image], VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                      VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                      VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+        VkRenderingAttachmentInfo att{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        att.imageView = swap_views_[image];
+        att.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        att.clearValue.color = {{0.08f, 0.08f, 0.09f, 1.0f}};
+        VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        rendering.renderArea = {{0, 0}, extent_};
+        rendering.layerCount = 1;
+        rendering.colorAttachmentCount = 1;
+        rendering.pColorAttachments = &att;
+        vkCmdBeginRendering(frame.cmd, &rendering);
+        if (ImDrawData* draw = ImGui::GetDrawData()) ImGui_ImplVulkan_RenderDrawData(draw, frame.cmd);
+        vkCmdEndRendering(frame.cmd);
+    }
+    image_barrier(frame.cmd, swap_images_[image], VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                  VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                  VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
+    vkEndCommandBuffer(frame.cmd);
 
     VkSemaphoreSubmitInfo wait{VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO};
     wait.semaphore = frame.image_available;
@@ -962,6 +1214,15 @@ Result<FrameStats> VulkanRenderer::render(world::World& world, const Camera& cam
 
     frame_index_ = (frame_index_ + 1) % kFramesInFlight;
     stats.presented = true;
+
+    // Apply a viewport resize only now: this frame's UI referenced the old
+    // texture, and waiting for idle makes it safe to destroy.
+    if (ui_ && (pending_viewport_.width != viewport_extent_.width ||
+                pending_viewport_.height != viewport_extent_.height)) {
+        vkDeviceWaitIdle(device_);
+        destroy_viewport_target();
+        AETHER_TRY(create_viewport_target());
+    }
     return stats;
 }
 
@@ -976,13 +1237,27 @@ Result<std::vector<std::uint8_t>> VulkanRenderer::read_pixels() {
 VulkanRenderer::~VulkanRenderer() {
     if (device_) {
         vkDeviceWaitIdle(device_);
+        if (ui_ && ImGui::GetCurrentContext() && ImGui::GetIO().BackendRendererUserData) {
+            destroy_viewport_target();
+            ImGui_ImplVulkan_Shutdown();
+        } else if (ui_) {
+            // ImGui was shut down first; its descriptor pool is ours and is
+            // destroyed below. Free our own viewport resources.
+            if (viewport_sample_view_) vkDestroyImageView(device_, viewport_sample_view_, nullptr);
+            destroy_image(viewport_);
+            destroy_image(depth_);
+        }
+        if (sampler_) vkDestroySampler(device_, sampler_, nullptr);
+        if (ui_pool_) vkDestroyDescriptorPool(device_, ui_pool_, nullptr);
         for (GpuMesh& m : meshes_) {
             destroy_buffer(m.vertices);
             destroy_buffer(m.indices);
         }
+        destroy_buffer(grid_);
         destroy_targets();
         if (swapchain_) vkDestroySwapchainKHR(device_, swapchain_, nullptr);
         if (pipeline_) vkDestroyPipeline(device_, pipeline_, nullptr);
+        if (grid_pipeline_) vkDestroyPipeline(device_, grid_pipeline_, nullptr);
         if (layout_) vkDestroyPipelineLayout(device_, layout_, nullptr);
         for (Frame& f : frames_) {
             if (f.fence) vkDestroyFence(device_, f.fence, nullptr);

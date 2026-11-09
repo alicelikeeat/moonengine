@@ -13,3 +13,4 @@ An ADR records one significant decision, its context and its consequences. ADRs 
 | 0007 | [Archetype ECS with generational handles and UUID identity](0007-archetype-ecs.md) | Accepted |
 | 0008 | [Scene hierarchy as components with two-way links](0008-scene-hierarchy.md) | Accepted |
 | 0009 | [First Vulkan renderer and vendored dependencies](0009-first-vulkan-renderer.md) | Accepted |
+| 0010 | [Editor UI built on Dear ImGui with a viewport texture](0010-editor-ui-dear-imgui.md) | Accepted |

@@ -4,6 +4,21 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-09
+
+Editor preview. Windows editor and demo published on GitHub Releases.
+
+### Added
+- Editor (`editor/`, `aether_editor`): docking UI with Viewport, Outliner, Details, Place Actors, Output Log and Stats; menus, toolbar, status bar; move/rotate/scale gizmos with snapping; click picking; fly/orbit/pan/zoom camera; undo/redo for edits, create, delete, duplicate and attach; play-in-editor with restore on Stop; dark theme with embedded Roboto font. 11 tests. ADR 0010.
+- Renderer UI mode (scene in a viewport texture, correct sRGB for UI and scene), selection highlight, analytic anti-aliased ground grid. 2 new pixel tests.
+- Math: `inverse`, `decompose`, Euler angle conversion, `transform_projective`. 3 tests.
+- World: `Name` component. Foundation: `MemorySink::clear`.
+- Vendored Dear ImGui 1.91.5 (docking), ImGuizmo and the Roboto font.
+- CI smoke-tests the editor; the Windows package contains the editor, the demo and a quick-start guide.
+
+### Changed
+- Release packaging lives in `tools/package_windows.ps1` and runs on every CI build.
+
 ## [0.1.0] - 2026-11-09
 
 First preview release. Windows demo binary published on GitHub Releases.

@@ -61,6 +61,11 @@ std::vector<MemorySink::Entry> MemorySink::entries() const {
     return {entries_.begin(), entries_.end()};
 }
 
+void MemorySink::clear() {
+    std::lock_guard lock(mutex_);
+    entries_.clear();
+}
+
 void Logger::add_sink(std::shared_ptr<LogSink> sink) {
     std::lock_guard lock(mutex_);
     sinks_.push_back(std::move(sink));

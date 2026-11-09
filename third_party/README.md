@@ -6,9 +6,12 @@ Foundation and World use only the C++ standard library and OS APIs (ADR 0006). T
 | --- | --- | --- | --- | --- |
 | [Vulkan-Headers](https://github.com/KhronosGroup/Vulkan-Headers) | 1.4.304 | Apache-2.0 OR MIT | render, samples | Vulkan API declarations |
 | [volk](https://github.com/zeux/volk) | 1.4.304 | MIT | render | Loads Vulkan at run time; no SDK needed to build or run |
-| [GLFW](https://www.glfw.org/) | 3.4 | Zlib | samples only | Windows and input for sample apps |
+| [GLFW](https://www.glfw.org/) | 3.4 | Zlib | samples, editor app | Windows and input for applications |
+| [Dear ImGui](https://github.com/ocornut/imgui) | 1.91.5 docking | MIT | render (UI pass), editor | Immediate-mode UI for the editor and debug overlays |
+| [ImGuizmo](https://github.com/CedricGuillemet/ImGuizmo) | pinned commit | MIT | editor | Translate/rotate/scale gizmos |
+| [Roboto](https://fonts.google.com/specimen/Roboto) Medium | from ImGui misc/fonts | Apache-2.0 | editor | UI font, embedded in the executable |
 
-The engine library never links GLFW; windowing stays in applications.
+The engine library never links GLFW; windowing stays in applications. The render module links Dear ImGui only to draw an optional UI layer.
 
 Developer tooling (not shipped):
 

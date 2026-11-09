@@ -77,6 +77,7 @@ public:
     void write(const LogRecord& record) override;
     // Snapshot; safe to call while other threads log through the Logger.
     [[nodiscard]] std::vector<Entry> entries() const;
+    void clear();
 
 private:
     mutable std::mutex mutex_;

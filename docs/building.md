@@ -55,6 +55,14 @@ python3 tools/validate_protocols.py
 python3 tools/compile_shaders.py --check                             # shaders up to date
 ```
 
+## Running the editor
+
+```bash
+./build/linux-gcc/editor/aether_editor
+```
+
+Controls are listed in [docs/user/quick-start.md](user/quick-start.md).
+
 ## Running the sample
 
 ```bash

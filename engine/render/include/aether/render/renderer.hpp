@@ -43,6 +43,16 @@ struct RendererDesc {
     // Optional; receives device selection, validation messages and errors.
     Logger* logger = nullptr;
     math::Vec3 clear_color{0.05f, 0.06f, 0.08f};
+    // Editor/UI mode (windowed only). The caller must have created a Dear
+    // ImGui context first. The scene is drawn into an offscreen viewport
+    // texture (see viewport_texture()) and the ImGui draw data of the frame
+    // is drawn to the window on top.
+    bool enable_ui = false;
+};
+
+struct RenderOptions {
+    world::Entity highlight = world::kNullEntity;  // drawn with the selection tint
+    bool grid = false;                             // ground grid on the XZ plane
 };
 
 struct GpuInfo {
@@ -67,7 +77,19 @@ public:
     // Call when the window size changes; takes effect on the next frame.
     virtual void resize(std::uint32_t width, std::uint32_t height) = 0;
 
-    virtual Result<FrameStats> render(world::World& world, const Camera& camera) = 0;
+    Result<FrameStats> render(world::World& world, const Camera& camera) { return render(world, camera, RenderOptions{}); }
+    virtual Result<FrameStats> render(world::World& world, const Camera& camera, const RenderOptions& options) = 0;
+
+    // ---- UI mode (RendererDesc::enable_ui) ----------------------------
+    // Call once per frame before ImGui::NewFrame().
+    virtual void begin_ui_frame() = 0;
+    // Size of the scene view in pixels; takes effect after the next render()
+    // so the texture used by the current frame's UI stays valid.
+    virtual void set_viewport_size(std::uint32_t width, std::uint32_t height) = 0;
+    // ImTextureID of the scene view for ImGui::Image (0 without UI mode).
+    [[nodiscard]] virtual std::uint64_t viewport_texture() const noexcept = 0;
+    [[nodiscard]] virtual std::uint32_t viewport_width() const noexcept = 0;
+    [[nodiscard]] virtual std::uint32_t viewport_height() const noexcept = 0;
 
     // Headless only: RGBA8 pixels of the last frame, row-major, top row first.
     virtual Result<std::vector<std::uint8_t>> read_pixels() = 0;

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(AetherEngine
-    VERSION 0.1.0
+    VERSION 0.2.0
     DESCRIPTION "Aether Engine - open source, AI-native 3D game engine"
     HOMEPAGE_URL "https://github.com/alicelikeeat/moonengine"
     LANGUAGES C CXX)
@@ -34,6 +34,7 @@ endif()
 
 add_subdirectory(third_party)
 add_subdirectory(engine)
+add_subdirectory(editor)
 
 if(AETHER_BUILD_SAMPLES)
     add_subdirectory(samples)

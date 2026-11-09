@@ -46,3 +46,44 @@ AETHER_TEST(matrix_product_composes_transforms) {
     CHECK(near(Mat4::identity() * a, a));
     CHECK(near(a * Mat4::identity(), a));
 }
+
+AETHER_TEST(matrix_inverse_round_trips) {
+    const Mat4 m = Mat4::from_trs({3, -2, 7}, normalize(Quat::from_axis_angle({1, 2, 3}, 0.8f)), {2, 0.5f, 3});
+    Mat4 inv;
+    REQUIRE(inverse(m, inv));
+    CHECK(near(m * inv, Mat4::identity(), 1e-4f));
+    CHECK(near(inv * m, Mat4::identity(), 1e-4f));
+    Mat4 singular = Mat4::from_trs({}, Quat::identity(), {1, 0, 1});
+    Mat4 untouched;
+    CHECK(!inverse(singular, untouched));
+}
+
+AETHER_TEST(decompose_recovers_trs) {
+    const Vec3 t{1, 2, 3}, s{2, 3, 4};
+    const Quat r = normalize(Quat::from_axis_angle({0.3f, 1, -0.2f}, 1.2f));
+    Vec3 t2, s2;
+    Quat r2;
+    decompose(Mat4::from_trs(t, r, s), t2, r2, s2);
+    CHECK(near(t2, t));
+    CHECK(near(s2, s, 1e-4f));
+    CHECK(near(Mat4::from_trs(t2, r2, s2), Mat4::from_trs(t, r, s), 1e-4f));
+    // Mirrored transform keeps its handedness after a round trip.
+    decompose(Mat4::from_trs(t, r, {-1, 1, 1}), t2, r2, s2);
+    CHECK(near(Mat4::from_trs(t2, r2, s2), Mat4::from_trs(t, r, {-1, 1, 1}), 1e-4f));
+}
+
+AETHER_TEST(euler_degrees_round_trip) {
+    for (const Vec3 e : {Vec3{0, 0, 0}, Vec3{30, 45, 60}, Vec3{-20, 170, -90}, Vec3{89, -45, 10}}) {
+        const Quat q = quat_from_euler_degrees(e);
+        const Vec3 back = euler_degrees_from_quat(q);
+        CHECK(near(Mat4::from_trs({}, quat_from_euler_degrees(back), {1, 1, 1}),
+                   Mat4::from_trs({}, q, {1, 1, 1}), 1e-4f));
+    }
+    // Yaw of 90 degrees turns +Z (forward) toward +X.
+    CHECK(near(rotate(quat_from_euler_degrees({0, 90, 0}), {0, 0, 1}), Vec3{1, 0, 0}, 1e-5f));
+    CHECK(near(euler_degrees_from_quat(quat_from_euler_degrees({10, 20, 30})), Vec3{10, 20, 30}, 1e-3f));
+    // Gimbal lock still yields an equivalent rotation.
+    const Quat locked = quat_from_euler_degrees({90, 30, 20});
+    CHECK(near(Mat4::from_trs({}, quat_from_euler_degrees(euler_degrees_from_quat(locked)), {1, 1, 1}),
+               Mat4::from_trs({}, locked, {1, 1, 1}), 1e-3f));
+}

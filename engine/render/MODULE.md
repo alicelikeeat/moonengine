@@ -15,7 +15,9 @@
 | `Renderer` | Abstract renderer; `Renderer::create` returns the Vulkan backend. Windowed or headless. |
 | `RendererDesc` | Size, vsync, validation, window-system extensions and surface callback, logger. |
 | `Camera`, `look_at`, `perspective`, `view_projection` | Right-handed camera with Vulkan clip space (depth 0..1, Y flipped). |
-| `MeshData`, `make_cube`, `MeshInstance` | CPU meshes and the component that draws an entity. |
+| `MeshData`, `make_cube`, `compute_bounds`, `MeshInstance` | CPU meshes, bounds, and the component that draws an entity. |
+| `RenderOptions` | Selection highlight and ground grid per frame. |
+| UI mode (`RendererDesc::enable_ui`) | Scene into a viewport texture (`viewport_texture()`), ImGui frame to the window. |
 
 ## Contracts
 
@@ -31,4 +33,4 @@ The GPU tests render offscreen and check pixels. They run on any Vulkan 1.3 devi
 
 ## Not yet implemented
 
-Render graph, device-local memory with staging uploads and a real allocator, materials and textures, multiple lights and shadows, GPU-driven culling, MSAA/TAA, glTF meshes, Metal backend.
+Render graph, MSAA for the editor viewport, device-local memory with staging uploads and a real allocator, materials and textures, multiple lights and shadows, GPU-driven culling, MSAA/TAA, glTF meshes, Metal backend.

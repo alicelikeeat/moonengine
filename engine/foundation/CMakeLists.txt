@@ -4,6 +4,7 @@ aether_add_module(foundation
         src/job_system.cpp
         src/lifecycle.cpp
         src/log.cpp
+        src/math.cpp
         src/memory.cpp
         src/platform.cpp
         src/result.cpp

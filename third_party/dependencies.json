@@ -38,6 +38,41 @@
       "used_by": [
         "samples"
       ]
+    },
+    {
+      "name": "Dear ImGui",
+      "version": "1.91.5 (docking branch)",
+      "license": "MIT",
+      "upstream": "https://github.com/ocornut/imgui",
+      "commit": "368123ab06b2b573d585e52f84cd782c5c006697",
+      "vendored_path": "third_party/imgui",
+      "trimmed": "core sources, imconfig.h, GLFW and Vulkan backends; examples, docs and other backends removed",
+      "used_by": [
+        "engine/render",
+        "editor"
+      ]
+    },
+    {
+      "name": "ImGuizmo",
+      "version": "master (2026-10-10)",
+      "license": "MIT",
+      "upstream": "https://github.com/CedricGuillemet/ImGuizmo",
+      "commit": "105e4fde45e4e74aae8973d98750820ef7aca7e2",
+      "vendored_path": "third_party/imguizmo",
+      "trimmed": "ImGuizmo.cpp and ImGuizmo.h only",
+      "used_by": [
+        "editor"
+      ]
+    },
+    {
+      "name": "Roboto Medium font",
+      "version": "as shipped with Dear ImGui 1.91.5 (misc/fonts)",
+      "license": "Apache-2.0",
+      "upstream": "https://fonts.google.com/specimen/Roboto",
+      "vendored_path": "third_party/fonts/Roboto-Medium.ttf",
+      "used_by": [
+        "editor (embedded via tools/embed_binary.py)"
+      ]
     }
   ],
   "tooling": [

@@ -24,6 +24,14 @@ struct MeshData {
 // Axis-aligned cube centred on the origin, 24 vertices with flat normals.
 [[nodiscard]] MeshData make_cube(float size = 1.0f);
 
+struct Aabb {
+    math::Vec3 min{};
+    math::Vec3 max{};
+};
+
+// Local-space bounds of a mesh (zero box for an empty mesh).
+[[nodiscard]] Aabb compute_bounds(const MeshData& mesh) noexcept;
+
 using MeshId = std::uint32_t;
 
 // Draws `mesh` with the entity's GlobalTransform.
