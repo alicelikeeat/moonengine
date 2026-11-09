@@ -1,0 +1,9 @@
+# LeakSanitizer suppressions for render tests only.
+#
+# Mesa's lavapipe (software Vulkan, used in CI) keeps small allocations
+# alive after vkDestroyInstance. The driver is unloaded by then, so its
+# frames appear as "<unknown module>". Aether code always resolves to a
+# known module, so this pattern cannot hide a leak in our own code.
+leak:<unknown module>
+leak:libvulkan_lvp.so
+leak:libLLVM

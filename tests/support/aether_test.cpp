@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <vector>
@@ -47,15 +48,26 @@ int main(int argc, char** argv) {
         filter = argv[i];
     }
 
+    const char* no_skip_env = std::getenv("AETHER_TEST_NO_SKIP");
+    const bool no_skip = no_skip_env && std::strcmp(no_skip_env, "1") == 0;
     int run = 0;
     int failed = 0;
+    int skipped = 0;
     for (const auto& t : registry()) {
         if (filter && std::strstr(t.name, filter) == nullptr) continue;
         ++run;
         g_current_failures = 0;
         const auto start = std::chrono::steady_clock::now();
+        bool was_skipped = false;
         try {
             t.fn();
+        } catch (const Skipped& s) {
+            if (no_skip) {
+                report_failure(t.file, t.line, "skipped but AETHER_TEST_NO_SKIP=1: " + s.reason);
+            } else {
+                was_skipped = true;
+                std::printf("[SKIP] %s: %s\n", t.name, s.reason.c_str());
+            }
         } catch (const RequireFailed&) {
         } catch (const std::exception& e) {
             report_failure(t.file, t.line, std::string("unhandled exception: ") + e.what());
@@ -64,6 +76,10 @@ int main(int argc, char** argv) {
         }
         const auto ms = std::chrono::duration<double, std::milli>(
                             std::chrono::steady_clock::now() - start).count();
+        if (was_skipped && g_current_failures == 0) {
+            ++skipped;
+            continue;
+        }
         if (g_current_failures > 0) {
             ++failed;
             std::printf("[FAIL] %s (%.2f ms)\n", t.name, ms);
@@ -71,7 +87,7 @@ int main(int argc, char** argv) {
             std::printf("[ OK ] %s (%.2f ms)\n", t.name, ms);
         }
     }
-    std::printf("\n%d test(s) run, %d failed\n", run, failed);
+    std::printf("\n%d test(s) run, %d failed, %d skipped\n", run, failed, skipped);
     if (run == 0) {
         std::fprintf(stderr, "no tests matched\n");
         return 1;

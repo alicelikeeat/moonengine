@@ -34,9 +34,20 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install Ninja
+      - name: Install build and test dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ninja-build
+        # X11 headers: GLFW (samples). Mesa lavapipe + validation layers: GPU
+        # tests on a software Vulkan device. glslang: shader freshness check.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+            mesa-vulkan-drivers vulkan-validationlayers glslang-tools xvfb
+
+      - name: Require every test to run
+        if: runner.os == 'Linux'
+        # Linux runners have a Vulkan device (lavapipe), so a skipped GPU
+        # test is a failure there. Windows runners have no GPU and may skip.
+        run: echo "AETHER_TEST_NO_SKIP=1" >> "$GITHUB_ENV"
 
       - name: Allow ThreadSanitizer to map its shadow memory
         if: matrix.preset == 'linux-tsan'
@@ -50,6 +61,35 @@ jobs:
 
       - name: Test
         run: ctest --preset ${{ matrix.test }}
+
+      - name: Check embedded shaders match their sources
+        if: matrix.preset == 'linux-gcc'
+        run: python3 tools/compile_shaders.py --check
+
+      - name: Smoke-test the windowed sample (virtual display, software Vulkan)
+        if: matrix.preset == 'linux-gcc'
+        run: xvfb-run -a ./build/linux-gcc/samples/spinning_cubes/aether_spinning_cubes --frames 120 --validation
+
+      - name: Package Windows sample
+        if: matrix.build == 'windows-msvc-release'
+        shell: pwsh
+        run: |
+          $out = "aether-spinning-cubes-windows-x64"
+          New-Item -ItemType Directory -Force -Path "$out/licenses" | Out-Null
+          Copy-Item build/windows-msvc/samples/spinning_cubes/Release/aether_spinning_cubes.exe $out/
+          Copy-Item LICENSE, NOTICE $out/
+          Copy-Item third_party/licenses/* "$out/licenses/"
+          Copy-Item samples/spinning_cubes/README.md "$out/README.md"
+          "commit: $env:GITHUB_SHA" | Out-File "$out/BUILD_INFO.txt"
+
+      - name: Upload Windows sample
+        if: matrix.build == 'windows-msvc-release'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: aether-spinning-cubes-windows-x64
+          path: aether-spinning-cubes-windows-x64
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Repeat concurrency tests
         if: matrix.preset == 'linux-tsan'

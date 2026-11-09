@@ -11,7 +11,7 @@ Dependencies only point **down** the layers. The rule is enforced at configure t
 | 0 | Foundation | `engine/foundation` | Memory, threads, jobs, logging, tracing, time, lifecycle, platform | **Implemented (core subset)** |
 | 1 | World | `engine/world` | ECS, scenes, streaming, stable IDs | **Implemented (ECS core)** |
 | 1 | Assets | `engine/assets` | Import, conversion, caching, dependency graph | Planned (M2) |
-| 2 | Render | `engine/render` | RHI, render graph, materials, lighting | Planned (M1) |
+| 2 | Render | `engine/render` | RHI, render graph, materials, lighting | **First slice: Vulkan 1.3 renderer** |
 | 2 | Simulation | `engine/simulation` | Physics, collision, fixed step, replay | Planned (M4) |
 | 2 | Animation | `engine/animation` | Skeletons, animation graph, IK | Planned (M4) |
 | 3 | Gameplay | `engine/gameplay` | Scripting, events, game logic | Planned (M4) |
@@ -47,6 +47,10 @@ Not yet in Foundation (tracked in [ROADMAP.md](../../ROADMAP.md)): async file I/
 ## World today
 
 Archetype ECS ([ADR 0007](../adr/0007-archetype-ecs.md)): generational `Entity` handles, UUID identity, named components, `each`/`par_each` queries, `CommandBuffer`, a `Schedule` that runs non-conflicting systems in parallel, and a scene hierarchy with transform propagation ([ADR 0008](../adr/0008-scene-hierarchy.md)). Details in [`engine/world/MODULE.md`](../../engine/world/MODULE.md).
+
+## Render today
+
+A Vulkan 1.3 renderer behind a backend-neutral `Renderer` interface ([ADR 0009](../adr/0009-first-vulkan-renderer.md)): windowed or headless, draws entities with `GlobalTransform` + `MeshInstance`. The `samples/spinning_cubes` program ties ECS, systems, hierarchy and rendering together. Details in [`engine/render/MODULE.md`](../../engine/render/MODULE.md).
 
 ## Verification
 

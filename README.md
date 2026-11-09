@@ -15,9 +15,11 @@ This is a young project. Here is exactly what exists today and what does not.
 | Foundation: allocators, work-stealing jobs, logging, tracing, time, lifecycle, UUIDs, math | ✅ Implemented and tested (41 tests) |
 | World: archetype ECS, queries, command buffers, parallel system schedule, scene hierarchy, transforms | ✅ Implemented and tested (30 tests) |
 | Aether Control Protocol (ACP) for tools and AI agents | 📝 Draft 0.1 schemas + validator |
-| Scene save format, Render (Vulkan), Assets, Editor, Physics, Animation, AI agents | ⏳ Not started — see [ROADMAP.md](ROADMAP.md) |
+| Render: Vulkan 1.3 renderer, windowed and headless | ✅ First slice, tested on software Vulkan (8 tests) |
+| Sample app: `samples/spinning_cubes` (Windows `.exe` from CI) | ✅ Runs; needs a Vulkan 1.3 GPU driver |
+| Scene save format, materials, Assets, Editor, Physics, Animation, AI agents | ⏳ Not started — see [ROADMAP.md](ROADMAP.md) |
 
-There is no renderer or editor yet. Claims about performance versus other engines will only be made with published, reproducible benchmarks.
+There is a first renderer and a demo program, but no editor yet. Claims about performance versus other engines will only be made with published, reproducible benchmarks.
 
 ## Principles
 
@@ -47,6 +49,8 @@ Full instructions: [docs/building.md](docs/building.md).
 | --- | --- |
 | `engine/foundation` | Core runtime: memory, jobs, logging, tracing, time, lifecycle, UUIDs |
 | `engine/world` | Entity component system: entities, components, queries, systems |
+| `engine/render` | Renderer interface and Vulkan backend |
+| `samples` | Runnable demo programs |
 | `protocols/acp` | Aether Control Protocol schemas, examples and spec |
 | `tests/support` | Dependency-free unit test harness |
 | `benchmarks` | Micro-benchmarks (JSON output) |
@@ -54,7 +58,7 @@ Full instructions: [docs/building.md](docs/building.md).
 | `tools` | Protocol validator, DCO checker |
 | `third_party` | Dependency manifest and licence records |
 
-Directories for Render, Editor, Intelligence and the other systems are added when they have working code and tests, not before. The planned layout is in [docs/architecture/overview.md](docs/architecture/overview.md).
+Directories for Editor, Intelligence and the other systems are added when they have working code and tests, not before. The planned layout is in [docs/architecture/overview.md](docs/architecture/overview.md).
 
 ## Contributing
 
