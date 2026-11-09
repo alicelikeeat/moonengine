@@ -1,0 +1,22 @@
+{
+  "changeset_id": "cs_01HZX4K9QW",
+  "base_version": 118,
+  "result_version": 119,
+  "status": "committed",
+  "author": {
+    "kind": "agent",
+    "id": "agent-run-77",
+    "role": "implementer",
+    "model": { "provider": "local", "name": "example-open-weights-model", "version": "2026-01", "local": true }
+  },
+  "summary": "Place a street lamp at the plaza entrance",
+  "operations": [
+    {
+      "method": "entity.create",
+      "target": "ent_5c0e11a2b7f4",
+      "params": { "scene": "scn_7f3a9c21d4e8", "name": "Street Lamp" },
+      "inverse": { "method": "entity.delete", "params": { "entity": "ent_5c0e11a2b7f4" } }
+    }
+  ],
+  "created_at": "2026-11-09T10:15:00Z"
+}

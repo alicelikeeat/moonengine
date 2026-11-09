@@ -1,0 +1,26 @@
+{
+  "method": "entity.create",
+  "interface": "entity",
+  "version": "0.1",
+  "description": "Creates an entity in a loaded scene with an optional initial component set.",
+  "effect": "write",
+  "scopes": ["entity:write"],
+  "idempotent": true,
+  "cancellable": false,
+  "preconditions": ["scene is loaded", "every referenced asset exists"],
+  "params": {
+    "type": "object",
+    "required": ["scene"],
+    "properties": {
+      "scene": { "type": "string" },
+      "name": { "type": "string" },
+      "parent": { "type": "string" },
+      "components": { "type": "object" }
+    }
+  },
+  "result": {
+    "type": "object",
+    "required": ["entity"],
+    "properties": { "entity": { "type": "string" } }
+  }
+}

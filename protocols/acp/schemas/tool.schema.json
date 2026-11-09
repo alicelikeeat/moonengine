@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aether-engine.dev/acp/0.1/tool.schema.json",
+  "title": "ACP tool descriptor",
+  "description": "Returned by engine.discover. Describes one callable method so an agent can plan without guessing.",
+  "type": "object",
+  "required": ["method", "interface", "version", "description", "effect", "scopes", "params", "result"],
+  "properties": {
+    "method": { "type": "string", "pattern": "^[a-z]+\\.[a-z_]+(\\.[a-z_]+)*$" },
+    "interface": {
+      "enum": ["engine", "scene", "entity", "asset", "render", "simulation", "animation", "build", "diagnostics", "transaction"]
+    },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+$" },
+    "description": { "type": "string", "minLength": 1 },
+    "effect": {
+      "enum": ["read", "write", "execute"],
+      "description": "write = changes project data (needs a transaction); execute = runs a process such as a build or test."
+    },
+    "scopes": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z]+:(read|write|execute|admin)$" },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "idempotent": { "type": "boolean", "default": false },
+    "cancellable": { "type": "boolean", "default": false },
+    "preconditions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Human- and machine-readable conditions, e.g. 'lifecycle.state == running'."
+    },
+    "params": { "type": "object", "description": "JSON Schema for request params." },
+    "result": { "type": "object", "description": "JSON Schema for the response result." }
+  },
+  "additionalProperties": false
+}

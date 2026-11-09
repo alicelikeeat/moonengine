@@ -1,0 +1,7 @@
+{
+  "acp": "0.1",
+  "kind": "event",
+  "event": "build.progress",
+  "request_id": "req-50",
+  "data": { "completed": 37, "total": 120, "phase": "compile" }
+}

@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aether-engine.dev/acp/0.1/message.schema.json",
+  "title": "ACP message",
+  "description": "Envelope for every Aether Control Protocol message: a request, a response, or an event.",
+  "oneOf": [
+    { "$ref": "#/$defs/request" },
+    { "$ref": "#/$defs/response" },
+    { "$ref": "#/$defs/event" }
+  ],
+  "$defs": {
+    "version": { "type": "string", "const": "0.1" },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Caller-chosen request id, echoed in the response."
+    },
+    "method": {
+      "type": "string",
+      "pattern": "^[a-z]+\\.[a-z_]+(\\.[a-z_]+)*$",
+      "description": "Interface-qualified method, e.g. scene.load or entity.set_component."
+    },
+    "scope": {
+      "type": "string",
+      "pattern": "^[a-z]+:(read|write|execute|admin)$",
+      "description": "Permission scope, e.g. scene:read, entity:write, build:execute."
+    },
+    "transaction": {
+      "type": "object",
+      "description": "Required on every write. The server rejects the request with 'conflict' if base_version is not the current project version.",
+      "required": ["changeset_id", "base_version"],
+      "properties": {
+        "changeset_id": { "type": "string", "pattern": "^cs_[0-9a-zA-Z]{8,64}$" },
+        "base_version": { "type": "integer", "minimum": 0 },
+        "dry_run": { "type": "boolean", "default": false }
+      },
+      "additionalProperties": false
+    },
+    "error": {
+      "type": "object",
+      "required": ["code", "name", "message"],
+      "properties": {
+        "code": {
+          "type": "integer",
+          "description": "Stable numeric code, identical to aether::ErrorCode.",
+          "minimum": 1,
+          "maximum": 13
+        },
+        "name": {
+          "enum": [
+            "unknown", "invalid_argument", "invalid_state", "not_found", "already_exists",
+            "out_of_memory", "unsupported", "timeout", "cancelled", "permission_denied",
+            "conflict", "io_error", "device_lost"
+          ]
+        },
+        "message": { "type": "string" },
+        "data": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "request": {
+      "type": "object",
+      "required": ["acp", "kind", "id", "method"],
+      "properties": {
+        "acp": { "$ref": "#/$defs/version" },
+        "kind": { "const": "request" },
+        "id": { "$ref": "#/$defs/id" },
+        "method": { "$ref": "#/$defs/method" },
+        "params": { "type": "object" },
+        "scopes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/scope" },
+          "uniqueItems": true,
+          "description": "Scopes the caller asserts it needs; each must have been granted to the session."
+        },
+        "transaction": { "$ref": "#/$defs/transaction" },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 128,
+          "description": "Retries with the same key return the original result instead of re-applying."
+        },
+        "timeout_ms": { "type": "integer", "minimum": 1, "maximum": 3600000 }
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "type": "object",
+      "required": ["acp", "kind", "id"],
+      "properties": {
+        "acp": { "$ref": "#/$defs/version" },
+        "kind": { "const": "response" },
+        "id": { "$ref": "#/$defs/id" },
+        "result": { "type": "object" },
+        "error": { "$ref": "#/$defs/error" },
+        "project_version": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Project version after the request; present on writes."
+        }
+      },
+      "oneOf": [
+        { "required": ["result"], "not": { "required": ["error"] } },
+        { "required": ["error"], "not": { "required": ["result"] } }
+      ],
+      "additionalProperties": false
+    },
+    "event": {
+      "type": "object",
+      "required": ["acp", "kind", "event", "data"],
+      "properties": {
+        "acp": { "$ref": "#/$defs/version" },
+        "kind": { "const": "event" },
+        "event": { "$ref": "#/$defs/method" },
+        "data": { "type": "object" },
+        "request_id": { "$ref": "#/$defs/id" }
+      },
+      "additionalProperties": false
+    }
+  }
+}
