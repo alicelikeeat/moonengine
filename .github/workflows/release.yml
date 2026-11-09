@@ -56,22 +56,7 @@ jobs:
 
       - name: Package
         shell: pwsh
-        run: |
-          $name = "aether-engine-$env:TAG-windows-x64"
-          New-Item -ItemType Directory -Force -Path "dist/$name/licenses" | Out-Null
-          Copy-Item build/windows-msvc/samples/spinning_cubes/Release/aether_spinning_cubes.exe "dist/$name/"
-          Copy-Item LICENSE, NOTICE "dist/$name/"
-          Copy-Item third_party/licenses/* "dist/$name/licenses/"
-          Copy-Item samples/spinning_cubes/README.md "dist/$name/README.md"
-          "version: $env:TAG`ncommit: $env:GITHUB_SHA`nbuild log: $env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID" |
-            Out-File -Encoding utf8 "dist/$name/BUILD_INFO.txt"
-          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
-          # Dependency manifest doubles as a minimal SBOM for this release.
-          Copy-Item third_party/dependencies.json "dist/aether-engine-$env:TAG-dependencies.json"
-          Get-ChildItem dist -File | ForEach-Object {
-            "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
-          } | Out-File -Encoding ascii "dist/SHA256SUMS.txt"
-          Get-Content dist/SHA256SUMS.txt
+        run: ./tools/package_windows.ps1 -Version $env:TAG -OutDir dist
 
       - name: Publish release
         shell: pwsh

@@ -70,17 +70,10 @@ jobs:
         if: matrix.preset == 'linux-gcc'
         run: xvfb-run -a ./build/linux-gcc/samples/spinning_cubes/aether_spinning_cubes --frames 120 --validation
 
-      - name: Package Windows sample
+      - name: Package Windows sample (same script as releases)
         if: matrix.build == 'windows-msvc-release'
         shell: pwsh
-        run: |
-          $out = "aether-spinning-cubes-windows-x64"
-          New-Item -ItemType Directory -Force -Path "$out/licenses" | Out-Null
-          Copy-Item build/windows-msvc/samples/spinning_cubes/Release/aether_spinning_cubes.exe $out/
-          Copy-Item LICENSE, NOTICE $out/
-          Copy-Item third_party/licenses/* "$out/licenses/"
-          Copy-Item samples/spinning_cubes/README.md "$out/README.md"
-          "commit: $env:GITHUB_SHA" | Out-File "$out/BUILD_INFO.txt"
+        run: ./tools/package_windows.ps1 -Version "ci-$($env:GITHUB_SHA.Substring(0,7))" -OutDir aether-spinning-cubes-windows-x64
 
       - name: Upload Windows sample
         if: matrix.build == 'windows-msvc-release'
