@@ -20,14 +20,19 @@ Foundation
 - [x] Structured logging (text, JSON Lines, memory)
 - [x] Chrome-trace performance tracing
 - [x] Fixed-step clock, lifecycle state machine
+- [x] v4 UUIDs
 - [ ] Async file I/O and resource handles
 - [ ] Crash handler with per-thread stack capture and minidumps
 - [ ] Lock-free work-stealing deque (current deques are mutex-based; ~0.8 µs per empty job on a 4-thread VM)
 - [ ] Public Foundation benchmark results on reference hardware (RTX 5070 Ti / 32 GB / Windows 11)
 
 World
-- [ ] Archetype ECS with stable generational entity IDs
-- [ ] Scene hierarchy, serialization format v1 (documented), migration hooks
+- [x] Archetype ECS with generational entity handles and UUID persistent identity
+- [x] Named components (addressable by tools and ACP), deferred command buffers
+- [x] System schedule with declared access and parallel waves
+- [ ] Batched entity creation (creation is ≈ 630 ns/entity with 2 components today)
+- [ ] Scene hierarchy and transform propagation
+- [ ] Serialization format v1 (documented), version migration hooks
 
 Render
 - [ ] RHI interface; Vulkan 1.3 backend

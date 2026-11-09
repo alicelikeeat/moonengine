@@ -1,0 +1,19 @@
+aether_add_module(world
+    SOURCES
+        src/archetype.cpp
+        src/schedule.cpp
+        src/world.cpp
+    DEPENDS
+        foundation)
+
+if(AETHER_BUILD_TESTS)
+    aether_add_test(aether_world_tests
+        SOURCES
+            tests/test_command_buffer.cpp
+            tests/test_entities.cpp
+            tests/test_queries.cpp
+            tests/test_schedule.cpp
+            tests/test_world_fuzz.cpp
+        LINK
+            Aether::world)
+endif()

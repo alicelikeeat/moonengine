@@ -5,6 +5,9 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 ## [Unreleased]
 
 ### Added
+- World module: archetype ECS with generational handles, UUID entity identity, named components, `each`/`par_each`/`count` queries, `CommandBuffer`, and a `Schedule` that runs systems with non-conflicting declared access in parallel. 21 tests including a randomized differential test against a reference model. ADR 0007.
+- Foundation: `Uuid` (v4 generation, parsing, formatting). 4 tests.
+- World micro-benchmarks.
 - Project governance: Apache-2.0 licence, DCO contribution process, code of conduct, security policy, governance model, roadmap.
 - CMake build with module layering checks; presets for Linux (GCC/Clang/ASan/TSan) and Windows (MSVC).
 - CI on GCC, Clang, MSVC with sanitizers, ACP schema validation and DCO checks.

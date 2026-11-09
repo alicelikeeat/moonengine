@@ -12,9 +12,10 @@ This is a young project. Here is exactly what exists today and what does not.
 | --- | --- |
 | Governance, licence, contribution process (DCO) | ✅ Done |
 | CMake build, presets, CI (GCC, Clang, MSVC, ASan/UBSan, TSan) | ✅ Done |
-| Foundation: allocators, work-stealing jobs, logging, tracing, time, lifecycle | ✅ Implemented and tested (32 tests) |
+| Foundation: allocators, work-stealing jobs, logging, tracing, time, lifecycle, UUIDs | ✅ Implemented and tested (36 tests) |
+| World: archetype ECS, queries, command buffers, parallel system schedule | ✅ Implemented and tested (21 tests) |
 | Aether Control Protocol (ACP) for tools and AI agents | 📝 Draft 0.1 schemas + validator |
-| World / ECS, Render (Vulkan), Assets, Editor, Physics, Animation, AI agents | ⏳ Not started — see [ROADMAP.md](ROADMAP.md) |
+| Scene hierarchy and save format, Render (Vulkan), Assets, Editor, Physics, Animation, AI agents | ⏳ Not started — see [ROADMAP.md](ROADMAP.md) |
 
 There is no renderer or editor yet. Claims about performance versus other engines will only be made with published, reproducible benchmarks.
 
@@ -44,7 +45,8 @@ Full instructions: [docs/building.md](docs/building.md).
 
 | Path | Contents |
 | --- | --- |
-| `engine/foundation` | Core runtime: memory, jobs, logging, tracing, time, lifecycle |
+| `engine/foundation` | Core runtime: memory, jobs, logging, tracing, time, lifecycle, UUIDs |
+| `engine/world` | Entity component system: entities, components, queries, systems |
 | `protocols/acp` | Aether Control Protocol schemas, examples and spec |
 | `tests/support` | Dependency-free unit test harness |
 | `benchmarks` | Micro-benchmarks (JSON output) |
@@ -52,7 +54,7 @@ Full instructions: [docs/building.md](docs/building.md).
 | `tools` | Protocol validator, DCO checker |
 | `third_party` | Dependency manifest and licence records |
 
-Directories for World, Render, Editor, Intelligence and the other systems are added when they have working code and tests, not before. The planned layout is in [docs/architecture/overview.md](docs/architecture/overview.md).
+Directories for Render, Editor, Intelligence and the other systems are added when they have working code and tests, not before. The planned layout is in [docs/architecture/overview.md](docs/architecture/overview.md).
 
 ## Contributing
 
