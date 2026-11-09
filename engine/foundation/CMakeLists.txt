@@ -1,0 +1,27 @@
+aether_add_module(foundation
+    SOURCES
+        src/assert.cpp
+        src/job_system.cpp
+        src/lifecycle.cpp
+        src/log.cpp
+        src/memory.cpp
+        src/platform.cpp
+        src/result.cpp
+        src/text.cpp
+        src/time.cpp
+        src/trace.cpp
+    LINK
+        Threads::Threads)
+
+if(AETHER_BUILD_TESTS)
+    aether_add_test(aether_foundation_tests
+        SOURCES
+            tests/test_job_system.cpp
+            tests/test_lifecycle.cpp
+            tests/test_log_trace.cpp
+            tests/test_memory.cpp
+            tests/test_result.cpp
+            tests/test_time.cpp
+        LINK
+            Aether::foundation)
+endif()

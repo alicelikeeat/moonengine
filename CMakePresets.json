@@ -1,0 +1,77 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": { "AETHER_WARNINGS_AS_ERRORS": "ON" }
+    },
+    {
+      "name": "linux-base",
+      "hidden": true,
+      "inherits": "base",
+      "generator": "Ninja",
+      "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "linux-gcc",
+      "displayName": "Linux GCC (Debug)",
+      "inherits": "linux-base",
+      "cacheVariables": { "CMAKE_CXX_COMPILER": "g++", "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "linux-clang",
+      "displayName": "Linux Clang (Release)",
+      "inherits": "linux-base",
+      "cacheVariables": { "CMAKE_CXX_COMPILER": "clang++", "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "linux-asan",
+      "displayName": "Linux GCC AddressSanitizer + UBSan",
+      "inherits": "linux-base",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "g++",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "AETHER_SANITIZER": "address",
+        "AETHER_BUILD_BENCHMARKS": "OFF"
+      }
+    },
+    {
+      "name": "linux-tsan",
+      "displayName": "Linux GCC ThreadSanitizer",
+      "inherits": "linux-base",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "g++",
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "AETHER_SANITIZER": "thread",
+        "AETHER_BUILD_BENCHMARKS": "OFF"
+      }
+    },
+    {
+      "name": "windows-msvc",
+      "displayName": "Windows Visual Studio 2022 (x64)",
+      "inherits": "base",
+      "generator": "Visual Studio 17 2022",
+      "architecture": { "value": "x64", "strategy": "set" },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "linux-gcc", "configurePreset": "linux-gcc" },
+    { "name": "linux-clang", "configurePreset": "linux-clang" },
+    { "name": "linux-asan", "configurePreset": "linux-asan" },
+    { "name": "linux-tsan", "configurePreset": "linux-tsan" },
+    { "name": "windows-msvc-debug", "configurePreset": "windows-msvc", "configuration": "Debug" },
+    { "name": "windows-msvc-release", "configurePreset": "windows-msvc", "configuration": "Release" }
+  ],
+  "testPresets": [
+    { "name": "linux-gcc", "configurePreset": "linux-gcc", "output": { "outputOnFailure": true } },
+    { "name": "linux-clang", "configurePreset": "linux-clang", "output": { "outputOnFailure": true } },
+    { "name": "linux-asan", "configurePreset": "linux-asan", "output": { "outputOnFailure": true } },
+    { "name": "linux-tsan", "configurePreset": "linux-tsan", "output": { "outputOnFailure": true } },
+    { "name": "windows-msvc-debug", "configurePreset": "windows-msvc", "configuration": "Debug", "output": { "outputOnFailure": true } },
+    { "name": "windows-msvc-release", "configurePreset": "windows-msvc", "configuration": "Release", "output": { "outputOnFailure": true } }
+  ]
+}
