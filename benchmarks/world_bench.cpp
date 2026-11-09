@@ -7,6 +7,7 @@
 #include "aether/foundation/job_system.hpp"
 #include "aether/foundation/platform.hpp"
 #include "aether/foundation/time.hpp"
+#include "aether/world/hierarchy.hpp"
 #include "aether/world/world.hpp"
 
 using namespace aether;
@@ -87,5 +88,29 @@ int main() {
         for (int i = 0; i < kChurn; ++i) sum += w.get<Position>(es[static_cast<std::size_t>(i) * 13 % kEntities])->x;
         if (sum < 0) std::printf("%f", static_cast<double>(sum));
     }), kChurn);
+
+    // Transform propagation: 10,000 trees of 100 entities (root + 99 nodes,
+    // each attached to a random earlier node in its tree).
+    {
+        World scene({.seed = 3});
+        std::uint32_t lcg = 12345;
+        std::vector<Entity> tree;
+        for (int t = 0; t < 10'000; ++t) {
+            tree.clear();
+            for (int i = 0; i < 100; ++i) {
+                const Entity e = scene.create();
+                scene.add<Transform>(e, Transform{{1, 0, 0}});
+                if (i > 0) {
+                    lcg = lcg * 1664525u + 1013904223u;
+                    (void)hierarchy::set_parent(scene, e, tree[lcg % tree.size()]);
+                }
+                tree.push_back(e);
+            }
+        }
+        propagate_transforms(scene);  // adds GlobalTransform once
+        report("propagate_transforms_1m", best_of(5, [&] { propagate_transforms(scene); }), 1'000'000);
+        report("propagate_transforms_1m_parallel",
+               best_of(5, [&] { propagate_transforms(scene, &jobs); }), 1'000'000);
+    }
     return 0;
 }

@@ -183,6 +183,13 @@ bool World::has(Entity e, ComponentId id) const noexcept {
     return r && r->archetype->column_of(id) >= 0;
 }
 
+void* World::get_raw(Entity e, ComponentId id) const noexcept {
+    const Record* r = record_of(e);
+    if (!r) return nullptr;
+    const int col = r->archetype->column_of(id);
+    return col < 0 ? nullptr : r->archetype->at(static_cast<std::size_t>(col), r->row);
+}
+
 std::vector<ComponentId> World::components_of(Entity e) const {
     const Record* r = record_of(e);
     return r ? r->archetype->types() : std::vector<ComponentId>{};
