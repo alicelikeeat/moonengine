@@ -116,6 +116,25 @@ struct Mat4 {
     [[nodiscard]] constexpr Vec3 translation() const noexcept { return {m[12], m[13], m[14]}; }
 };
 
+// General 4x4 inverse. Returns false (and leaves `out` unchanged) if the
+// matrix is singular.
+bool inverse(const Mat4& m, Mat4& out) noexcept;
+
+// Applies m to (p, 1) and divides by w: for projection matrices.
+[[nodiscard]] Vec3 transform_projective(const Mat4& m, const Vec3& p) noexcept;
+
+// Splits an affine TRS matrix into translation, rotation and (possibly
+// negative) scale. Shear is discarded.
+void decompose(const Mat4& m, Vec3& translation, Quat& rotation, Vec3& scale) noexcept;
+
+// Quaternion from a pure rotation matrix (upper 3x3 of `m`, orthonormal).
+[[nodiscard]] Quat quat_from_rotation_matrix(const Mat4& m) noexcept;
+
+// Euler angles in degrees as shown in the editor: x = pitch (about X),
+// y = yaw (about Y), z = roll (about Z), applied as yaw * pitch * roll.
+[[nodiscard]] Quat quat_from_euler_degrees(const Vec3& euler) noexcept;
+[[nodiscard]] Vec3 euler_degrees_from_quat(const Quat& q) noexcept;
+
 [[nodiscard]] inline bool near(float a, float b, float eps = 1e-5f) noexcept { return std::fabs(a - b) <= eps; }
 [[nodiscard]] inline bool near(const Vec3& a, const Vec3& b, float eps = 1e-5f) noexcept {
     return near(a.x, b.x, eps) && near(a.y, b.y, eps) && near(a.z, b.z, eps);
