@@ -30,7 +30,8 @@
         },
         "MeshInstance": {
           "mesh": "builtin:cube",
-          "color": [1, 0.72, 0.2]
+          "color": [1, 0.72, 0.2],
+          "emissive": [1.6, 0.9, 0.25]
         },
         "Spin": {
           "axis": [0, 1, 0],
@@ -40,6 +41,26 @@
     },
     {
       "id": "1d497f6c-5f07-470d-96a7-bbdd031ea556",
+      "parent": "208cc717-8ca4-48ea-bce5-4adce6358962",
+      "components": {
+        "Name": {
+          "value": "Sun Glow"
+        },
+        "Transform": {
+          "position": [0, 0, 0],
+          "rotation": [0, 0, 0, 1],
+          "scale": [1, 1, 1]
+        },
+        "Light": {
+          "type": "point",
+          "color": [1, 0.78, 0.45],
+          "intensity": 40,
+          "range": 24
+        }
+      }
+    },
+    {
+      "id": "677fd332-e891-49ea-a051-7ba844b023c6",
       "parent": "208cc717-8ca4-48ea-bce5-4adce6358962",
       "components": {
         "Name": {
@@ -57,8 +78,8 @@
       }
     },
     {
-      "id": "677fd332-e891-49ea-a051-7ba844b023c6",
-      "parent": "1d497f6c-5f07-470d-96a7-bbdd031ea556",
+      "id": "5f0cf0ce-c024-4e93-a4f9-5a69ee9f2489",
+      "parent": "677fd332-e891-49ea-a051-7ba844b023c6",
       "components": {
         "Name": {
           "value": "Mercury"
@@ -70,7 +91,8 @@
         },
         "MeshInstance": {
           "mesh": "builtin:cube",
-          "color": [0.3, 0.6, 1]
+          "color": [0.3, 0.6, 1],
+          "roughness": 0.35
         },
         "Spin": {
           "axis": [0.3, 1, 0.2],
@@ -79,8 +101,8 @@
       }
     },
     {
-      "id": "5f0cf0ce-c024-4e93-a4f9-5a69ee9f2489",
-      "parent": "677fd332-e891-49ea-a051-7ba844b023c6",
+      "id": "1be7460a-8e0c-43e6-a747-be34be675376",
+      "parent": "5f0cf0ce-c024-4e93-a4f9-5a69ee9f2489",
       "components": {
         "Name": {
           "value": "Mercury Moon 1 Orbit"
@@ -97,8 +119,8 @@
       }
     },
     {
-      "id": "1be7460a-8e0c-43e6-a747-be34be675376",
-      "parent": "5f0cf0ce-c024-4e93-a4f9-5a69ee9f2489",
+      "id": "c622a18d-2b8a-42ac-b092-b532e34a29b5",
+      "parent": "1be7460a-8e0c-43e6-a747-be34be675376",
       "components": {
         "Name": {
           "value": "Mercury Moon 1"
@@ -110,7 +132,9 @@
         },
         "MeshInstance": {
           "mesh": "builtin:cube",
-          "color": [0.85, 0.85, 0.9]
+          "color": [0.85, 0.85, 0.9],
+          "metallic": 1,
+          "roughness": 0.3
         },
         "Spin": {
           "axis": [1, 1, 0],
@@ -119,7 +143,7 @@
       }
     },
     {
-      "id": "c622a18d-2b8a-42ac-b092-b532e34a29b5",
+      "id": "32924c37-a783-4019-82a7-ea99d9428b02",
       "parent": "208cc717-8ca4-48ea-bce5-4adce6358962",
       "components": {
         "Name": {
@@ -137,8 +161,8 @@
       }
     },
     {
-      "id": "32924c37-a783-4019-82a7-ea99d9428b02",
-      "parent": "c622a18d-2b8a-42ac-b092-b532e34a29b5",
+      "id": "75a59421-7afc-4058-8af2-7d4832c1d1ba",
+      "parent": "32924c37-a783-4019-82a7-ea99d9428b02",
       "components": {
         "Name": {
           "value": "Venus"
@@ -150,7 +174,8 @@
         },
         "MeshInstance": {
           "mesh": "builtin:cube",
-          "color": [0.4, 0.9, 0.5]
+          "color": [0.4, 0.9, 0.5],
+          "roughness": 0.45
         },
         "Spin": {
           "axis": [0.3, 1, 0.2],
@@ -159,8 +184,8 @@
       }
     },
     {
-      "id": "75a59421-7afc-4058-8af2-7d4832c1d1ba",
-      "parent": "32924c37-a783-4019-82a7-ea99d9428b02",
+      "id": "93348722-a3b2-45b2-a44e-dfba69941b47",
+      "parent": "75a59421-7afc-4058-8af2-7d4832c1d1ba",
       "components": {
         "Name": {
           "value": "Venus Moon 1 Orbit"
@@ -177,8 +202,8 @@
       }
     },
     {
-      "id": "93348722-a3b2-45b2-a44e-dfba69941b47",
-      "parent": "75a59421-7afc-4058-8af2-7d4832c1d1ba",
+      "id": "3a4ef9ec-292d-41d2-97f9-fab1a89ddce7",
+      "parent": "93348722-a3b2-45b2-a44e-dfba69941b47",
       "components": {
         "Name": {
           "value": "Venus Moon 1"
@@ -190,7 +215,9 @@
         },
         "MeshInstance": {
           "mesh": "builtin:cube",
-          "color": [0.85, 0.85, 0.9]
+          "color": [0.85, 0.85, 0.9],
+          "metallic": 1,
+          "roughness": 0.3
         },
         "Spin": {
           "axis": [1, 1, 0],
@@ -199,8 +226,8 @@
       }
     },
     {
-      "id": "3a4ef9ec-292d-41d2-97f9-fab1a89ddce7",
-      "parent": "32924c37-a783-4019-82a7-ea99d9428b02",
+      "id": "5952c05f-8f60-4464-8490-f2dde5f2fe61",
+      "parent": "75a59421-7afc-4058-8af2-7d4832c1d1ba",
       "components": {
         "Name": {
           "value": "Venus Moon 2 Orbit"
@@ -217,8 +244,8 @@
       }
     },
     {
-      "id": "5952c05f-8f60-4464-8490-f2dde5f2fe61",
-      "parent": "3a4ef9ec-292d-41d2-97f9-fab1a89ddce7",
+      "id": "b6a4988d-a83b-4277-b127-58cd585de58a",
+      "parent": "5952c05f-8f60-4464-8490-f2dde5f2fe61",
       "components": {
         "Name": {
           "value": "Venus Moon 2"
@@ -230,7 +257,9 @@
         },
         "MeshInstance": {
           "mesh": "builtin:cube",
-          "color": [0.85, 0.85, 0.9]
+          "color": [0.85, 0.85, 0.9],
+          "metallic": 1,
+          "roughness": 0.3
         },
         "Spin": {
           "axis": [1, 1, 0],
@@ -239,7 +268,7 @@
       }
     },
     {
-      "id": "b6a4988d-a83b-4277-b127-58cd585de58a",
+      "id": "ee7f10bd-87e2-4865-ac2b-1249eaeea50a",
       "parent": "208cc717-8ca4-48ea-bce5-4adce6358962",
       "components": {
         "Name": {
@@ -257,8 +286,8 @@
       }
     },
     {
-      "id": "ee7f10bd-87e2-4865-ac2b-1249eaeea50a",
-      "parent": "b6a4988d-a83b-4277-b127-58cd585de58a",
+      "id": "391eadda-833a-4ff7-a746-2f4a7a98153c",
+      "parent": "ee7f10bd-87e2-4865-ac2b-1249eaeea50a",
       "components": {
         "Name": {
           "value": "Earth"
@@ -270,7 +299,8 @@
         },
         "MeshInstance": {
           "mesh": "builtin:cube",
-          "color": [0.9, 0.35, 0.4]
+          "color": [0.9, 0.35, 0.4],
+          "roughness": 0.55
         },
         "Spin": {
           "axis": [0.3, 1, 0.2],
@@ -279,8 +309,8 @@
       }
     },
     {
-      "id": "391eadda-833a-4ff7-a746-2f4a7a98153c",
-      "parent": "ee7f10bd-87e2-4865-ac2b-1249eaeea50a",
+      "id": "883a8741-2ab1-450e-852c-a5039534e656",
+      "parent": "391eadda-833a-4ff7-a746-2f4a7a98153c",
       "components": {
         "Name": {
           "value": "Earth Moon 1 Orbit"
@@ -297,8 +327,8 @@
       }
     },
     {
-      "id": "883a8741-2ab1-450e-852c-a5039534e656",
-      "parent": "391eadda-833a-4ff7-a746-2f4a7a98153c",
+      "id": "c03ed6ae-b371-4681-b10e-dc12e3913329",
+      "parent": "883a8741-2ab1-450e-852c-a5039534e656",
       "components": {
         "Name": {
           "value": "Earth Moon 1"
@@ -310,7 +340,9 @@
         },
         "MeshInstance": {
           "mesh": "builtin:cube",
-          "color": [0.85, 0.85, 0.9]
+          "color": [0.85, 0.85, 0.9],
+          "metallic": 1,
+          "roughness": 0.3
         },
         "Spin": {
           "axis": [1, 1, 0],
@@ -319,8 +351,8 @@
       }
     },
     {
-      "id": "c03ed6ae-b371-4681-b10e-dc12e3913329",
-      "parent": "ee7f10bd-87e2-4865-ac2b-1249eaeea50a",
+      "id": "e7eeef67-9e90-4992-9188-c2336c9392e8",
+      "parent": "391eadda-833a-4ff7-a746-2f4a7a98153c",
       "components": {
         "Name": {
           "value": "Earth Moon 2 Orbit"
@@ -337,8 +369,8 @@
       }
     },
     {
-      "id": "e7eeef67-9e90-4992-9188-c2336c9392e8",
-      "parent": "c03ed6ae-b371-4681-b10e-dc12e3913329",
+      "id": "ef803e89-8aef-411d-8d47-759834e95c78",
+      "parent": "e7eeef67-9e90-4992-9188-c2336c9392e8",
       "components": {
         "Name": {
           "value": "Earth Moon 2"
@@ -350,7 +382,9 @@
         },
         "MeshInstance": {
           "mesh": "builtin:cube",
-          "color": [0.85, 0.85, 0.9]
+          "color": [0.85, 0.85, 0.9],
+          "metallic": 1,
+          "roughness": 0.3
         },
         "Spin": {
           "axis": [1, 1, 0],
@@ -359,8 +393,8 @@
       }
     },
     {
-      "id": "ef803e89-8aef-411d-8d47-759834e95c78",
-      "parent": "ee7f10bd-87e2-4865-ac2b-1249eaeea50a",
+      "id": "5b75091d-dbab-40e4-8060-62fb5dd3c4f9",
+      "parent": "391eadda-833a-4ff7-a746-2f4a7a98153c",
       "components": {
         "Name": {
           "value": "Earth Moon 3 Orbit"
@@ -377,8 +411,8 @@
       }
     },
     {
-      "id": "5b75091d-dbab-40e4-8060-62fb5dd3c4f9",
-      "parent": "ef803e89-8aef-411d-8d47-759834e95c78",
+      "id": "2a49a67d-9a39-44ce-a38b-6e0a3fa711db",
+      "parent": "5b75091d-dbab-40e4-8060-62fb5dd3c4f9",
       "components": {
         "Name": {
           "value": "Earth Moon 3"
@@ -390,7 +424,9 @@
         },
         "MeshInstance": {
           "mesh": "builtin:cube",
-          "color": [0.85, 0.85, 0.9]
+          "color": [0.85, 0.85, 0.9],
+          "metallic": 1,
+          "roughness": 0.3
         },
         "Spin": {
           "axis": [1, 1, 0],
@@ -399,7 +435,7 @@
       }
     },
     {
-      "id": "2a49a67d-9a39-44ce-a38b-6e0a3fa711db",
+      "id": "85e7c3a2-52fe-40ae-ae44-723d91b04759",
       "parent": "208cc717-8ca4-48ea-bce5-4adce6358962",
       "components": {
         "Name": {
@@ -417,8 +453,8 @@
       }
     },
     {
-      "id": "85e7c3a2-52fe-40ae-ae44-723d91b04759",
-      "parent": "2a49a67d-9a39-44ce-a38b-6e0a3fa711db",
+      "id": "1df54e69-03ff-49dd-bf8b-7bfa8cc56b31",
+      "parent": "85e7c3a2-52fe-40ae-ae44-723d91b04759",
       "components": {
         "Name": {
           "value": "Mars"
@@ -430,7 +466,8 @@
         },
         "MeshInstance": {
           "mesh": "builtin:cube",
-          "color": [0.7, 0.5, 1]
+          "color": [0.7, 0.5, 1],
+          "roughness": 0.65
         },
         "Spin": {
           "axis": [0.3, 1, 0.2],
@@ -439,8 +476,8 @@
       }
     },
     {
-      "id": "1df54e69-03ff-49dd-bf8b-7bfa8cc56b31",
-      "parent": "85e7c3a2-52fe-40ae-ae44-723d91b04759",
+      "id": "fc7d9da2-bd66-48ad-8338-1416ec13a2de",
+      "parent": "1df54e69-03ff-49dd-bf8b-7bfa8cc56b31",
       "components": {
         "Name": {
           "value": "Mars Moon 1 Orbit"
@@ -457,8 +494,8 @@
       }
     },
     {
-      "id": "fc7d9da2-bd66-48ad-8338-1416ec13a2de",
-      "parent": "1df54e69-03ff-49dd-bf8b-7bfa8cc56b31",
+      "id": "7369b946-d8ec-4e8a-b04a-dee2a0e26ffa",
+      "parent": "fc7d9da2-bd66-48ad-8338-1416ec13a2de",
       "components": {
         "Name": {
           "value": "Mars Moon 1"
@@ -470,7 +507,9 @@
         },
         "MeshInstance": {
           "mesh": "builtin:cube",
-          "color": [0.85, 0.85, 0.9]
+          "color": [0.85, 0.85, 0.9],
+          "metallic": 1,
+          "roughness": 0.3
         },
         "Spin": {
           "axis": [1, 1, 0],
@@ -479,7 +518,7 @@
       }
     },
     {
-      "id": "7369b946-d8ec-4e8a-b04a-dee2a0e26ffa",
+      "id": "31daffa8-73a4-4faf-9153-d905f81c2529",
       "parent": "208cc717-8ca4-48ea-bce5-4adce6358962",
       "components": {
         "Name": {
@@ -497,8 +536,8 @@
       }
     },
     {
-      "id": "31daffa8-73a4-4faf-9153-d905f81c2529",
-      "parent": "7369b946-d8ec-4e8a-b04a-dee2a0e26ffa",
+      "id": "89c09504-1a74-4618-80ce-e46dc83262ae",
+      "parent": "31daffa8-73a4-4faf-9153-d905f81c2529",
       "components": {
         "Name": {
           "value": "Jupiter"
@@ -510,7 +549,8 @@
         },
         "MeshInstance": {
           "mesh": "builtin:cube",
-          "color": [0.2, 0.85, 0.85]
+          "color": [0.2, 0.85, 0.85],
+          "roughness": 0.75
         },
         "Spin": {
           "axis": [0.3, 1, 0.2],
@@ -519,8 +559,8 @@
       }
     },
     {
-      "id": "89c09504-1a74-4618-80ce-e46dc83262ae",
-      "parent": "31daffa8-73a4-4faf-9153-d905f81c2529",
+      "id": "94b3379f-3897-4f45-8d65-2cf1f0c8dba9",
+      "parent": "89c09504-1a74-4618-80ce-e46dc83262ae",
       "components": {
         "Name": {
           "value": "Jupiter Moon 1 Orbit"
@@ -537,8 +577,8 @@
       }
     },
     {
-      "id": "94b3379f-3897-4f45-8d65-2cf1f0c8dba9",
-      "parent": "89c09504-1a74-4618-80ce-e46dc83262ae",
+      "id": "f21c0737-81b2-464c-b576-be0368f4ce1a",
+      "parent": "94b3379f-3897-4f45-8d65-2cf1f0c8dba9",
       "components": {
         "Name": {
           "value": "Jupiter Moon 1"
@@ -550,7 +590,9 @@
         },
         "MeshInstance": {
           "mesh": "builtin:cube",
-          "color": [0.85, 0.85, 0.9]
+          "color": [0.85, 0.85, 0.9],
+          "metallic": 1,
+          "roughness": 0.3
         },
         "Spin": {
           "axis": [1, 1, 0],
@@ -559,8 +601,8 @@
       }
     },
     {
-      "id": "f21c0737-81b2-464c-b576-be0368f4ce1a",
-      "parent": "31daffa8-73a4-4faf-9153-d905f81c2529",
+      "id": "d857b683-f060-4657-8e0a-9d613c82a094",
+      "parent": "89c09504-1a74-4618-80ce-e46dc83262ae",
       "components": {
         "Name": {
           "value": "Jupiter Moon 2 Orbit"
@@ -577,8 +619,8 @@
       }
     },
     {
-      "id": "d857b683-f060-4657-8e0a-9d613c82a094",
-      "parent": "f21c0737-81b2-464c-b576-be0368f4ce1a",
+      "id": "a4124bfe-2f71-435d-a4b9-49bdcfb596eb",
+      "parent": "d857b683-f060-4657-8e0a-9d613c82a094",
       "components": {
         "Name": {
           "value": "Jupiter Moon 2"
@@ -590,7 +632,9 @@
         },
         "MeshInstance": {
           "mesh": "builtin:cube",
-          "color": [0.85, 0.85, 0.9]
+          "color": [0.85, 0.85, 0.9],
+          "metallic": 1,
+          "roughness": 0.3
         },
         "Spin": {
           "axis": [1, 1, 0],
@@ -599,7 +643,7 @@
       }
     },
     {
-      "id": "a4124bfe-2f71-435d-a4b9-49bdcfb596eb",
+      "id": "385fa173-27f7-4c78-a09d-11682bd4f419",
       "parent": "208cc717-8ca4-48ea-bce5-4adce6358962",
       "components": {
         "Name": {
@@ -617,8 +661,8 @@
       }
     },
     {
-      "id": "385fa173-27f7-4c78-a09d-11682bd4f419",
-      "parent": "a4124bfe-2f71-435d-a4b9-49bdcfb596eb",
+      "id": "83a3783e-93df-443f-909b-dcc4d4921939",
+      "parent": "385fa173-27f7-4c78-a09d-11682bd4f419",
       "components": {
         "Name": {
           "value": "Saturn"
@@ -630,7 +674,8 @@
         },
         "MeshInstance": {
           "mesh": "builtin:cube",
-          "color": [0.95, 0.6, 0.3]
+          "color": [0.95, 0.6, 0.3],
+          "roughness": 0.85
         },
         "Spin": {
           "axis": [0.3, 1, 0.2],
@@ -639,8 +684,8 @@
       }
     },
     {
-      "id": "83a3783e-93df-443f-909b-dcc4d4921939",
-      "parent": "385fa173-27f7-4c78-a09d-11682bd4f419",
+      "id": "e3350dbd-bcad-4202-8186-cd2c4e58583e",
+      "parent": "83a3783e-93df-443f-909b-dcc4d4921939",
       "components": {
         "Name": {
           "value": "Saturn Moon 1 Orbit"
@@ -657,8 +702,8 @@
       }
     },
     {
-      "id": "e3350dbd-bcad-4202-8186-cd2c4e58583e",
-      "parent": "83a3783e-93df-443f-909b-dcc4d4921939",
+      "id": "de4f9330-6708-4165-b9fc-ebf01d989ac5",
+      "parent": "e3350dbd-bcad-4202-8186-cd2c4e58583e",
       "components": {
         "Name": {
           "value": "Saturn Moon 1"
@@ -670,7 +715,9 @@
         },
         "MeshInstance": {
           "mesh": "builtin:cube",
-          "color": [0.85, 0.85, 0.9]
+          "color": [0.85, 0.85, 0.9],
+          "metallic": 1,
+          "roughness": 0.3
         },
         "Spin": {
           "axis": [1, 1, 0],
@@ -679,8 +726,8 @@
       }
     },
     {
-      "id": "de4f9330-6708-4165-b9fc-ebf01d989ac5",
-      "parent": "385fa173-27f7-4c78-a09d-11682bd4f419",
+      "id": "dd1a279b-e980-4df6-8f90-01c8c516e927",
+      "parent": "83a3783e-93df-443f-909b-dcc4d4921939",
       "components": {
         "Name": {
           "value": "Saturn Moon 2 Orbit"
@@ -697,8 +744,8 @@
       }
     },
     {
-      "id": "dd1a279b-e980-4df6-8f90-01c8c516e927",
-      "parent": "de4f9330-6708-4165-b9fc-ebf01d989ac5",
+      "id": "f87f19da-a0bb-441b-945d-2ab4af0f126e",
+      "parent": "dd1a279b-e980-4df6-8f90-01c8c516e927",
       "components": {
         "Name": {
           "value": "Saturn Moon 2"
@@ -710,7 +757,9 @@
         },
         "MeshInstance": {
           "mesh": "builtin:cube",
-          "color": [0.85, 0.85, 0.9]
+          "color": [0.85, 0.85, 0.9],
+          "metallic": 1,
+          "roughness": 0.3
         },
         "Spin": {
           "axis": [1, 1, 0],
@@ -719,8 +768,8 @@
       }
     },
     {
-      "id": "f87f19da-a0bb-441b-945d-2ab4af0f126e",
-      "parent": "385fa173-27f7-4c78-a09d-11682bd4f419",
+      "id": "abe59bb6-70c8-4782-aca7-b8a0fd2c19ce",
+      "parent": "83a3783e-93df-443f-909b-dcc4d4921939",
       "components": {
         "Name": {
           "value": "Saturn Moon 3 Orbit"
@@ -737,8 +786,8 @@
       }
     },
     {
-      "id": "abe59bb6-70c8-4782-aca7-b8a0fd2c19ce",
-      "parent": "f87f19da-a0bb-441b-945d-2ab4af0f126e",
+      "id": "6e7ba4c3-0e3f-4e8a-bf4b-1d423db406f9",
+      "parent": "abe59bb6-70c8-4782-aca7-b8a0fd2c19ce",
       "components": {
         "Name": {
           "value": "Saturn Moon 3"
@@ -750,7 +799,9 @@
         },
         "MeshInstance": {
           "mesh": "builtin:cube",
-          "color": [0.85, 0.85, 0.9]
+          "color": [0.85, 0.85, 0.9],
+          "metallic": 1,
+          "roughness": 0.3
         },
         "Spin": {
           "axis": [1, 1, 0],
@@ -759,7 +810,7 @@
       }
     },
     {
-      "id": "6e7ba4c3-0e3f-4e8a-bf4b-1d423db406f9",
+      "id": "209e9575-d1b5-42fb-8129-87c41921d98b",
       "components": {
         "Name": {
           "value": "Floor"
@@ -771,7 +822,27 @@
         },
         "MeshInstance": {
           "mesh": "builtin:cube",
-          "color": [0.09, 0.095, 0.105]
+          "color": [0.09, 0.095, 0.105],
+          "roughness": 0.9
+        }
+      }
+    },
+    {
+      "id": "a97aaf7d-6f68-4597-abe7-1b61fc0e9ee3",
+      "components": {
+        "Name": {
+          "value": "Sun Light"
+        },
+        "Transform": {
+          "position": [6, 12, 6],
+          "rotation": [-0.5532442, 0.24895985, 0, 0.79494643],
+          "scale": [1, 1, 1]
+        },
+        "Light": {
+          "type": "directional",
+          "color": [1, 0.96, 0.9],
+          "intensity": 2.5,
+          "shadows": true
         }
       }
     }

@@ -6,60 +6,84 @@
     {
       "id": "3b2f6a10-6c1e-4d6a-9a51-0a1c2d3e4f01",
       "components": {
-        "Name": { "value": "Ground" },
-        "Transform": { "position": [0, -0.05, 0], "rotation": [0, 0, 0, 1], "scale": [12, 0.1, 12] },
-        "MeshInstance": { "mesh": "builtin:cube", "color": [0.16, 0.2, 0.13] }
+        "Name": {"value": "Ground"},
+        "Transform": {"position": [0, -0.05, 0], "rotation": [0, 0, 0, 1], "scale": [12, 0.1, 12]},
+        "MeshInstance": {"mesh": "builtin:cube", "color": [0.16, 0.2, 0.13], "roughness": 0.9}
       }
     },
     {
       "id": "3b2f6a10-6c1e-4d6a-9a51-0a1c2d3e4f02",
       "components": {
-        "Name": { "value": "Crate" },
-        "Transform": { "position": [-2, 0.5, 1], "rotation": [0, 0.2588, 0, 0.9659], "scale": [1, 1, 1] },
-        "MeshInstance": { "mesh": "asset:models/crate.glb#mesh0.0", "color": [1, 1, 1], "texture": "asset:models/crate.glb#texture0" }
+        "Name": {"value": "Crate"},
+        "Transform": {"position": [-2, 0.5, 1], "rotation": [0, 0.2588, 0, 0.9659], "scale": [1, 1, 1]},
+        "MeshInstance": {"mesh": "asset:models/crate.glb#mesh0.0", "color": [1, 1, 1], "texture": "asset:models/crate.glb#texture0", "metallic": 1, "roughness": 1, "normal_texture": "asset:models/crate.glb#texture2.linear", "metallic_roughness_texture": "asset:models/crate.glb#texture1.linear"}
       }
     },
     {
       "id": "3b2f6a10-6c1e-4d6a-9a51-0a1c2d3e4f03",
       "components": {
-        "Name": { "value": "Torus" },
-        "Transform": { "position": [2, 0.95, 0], "rotation": [0.7071, 0, 0, 0.7071], "scale": [1, 1, 1] },
-        "MeshInstance": { "mesh": "asset:models/torus.glb#mesh0.0", "color": [1, 1, 1], "texture": "asset:models/torus.glb#texture0" }
+        "Name": {"value": "Torus"},
+        "Transform": {"position": [2, 0.95, 0], "rotation": [0.7071, 0, 0, 0.7071], "scale": [1, 1, 1]},
+        "MeshInstance": {"mesh": "asset:models/torus.glb#mesh0.0", "color": [1, 1, 1], "texture": "asset:models/torus.glb#texture0", "roughness": 0.35}
       }
     },
     {
       "id": "3b2f6a10-6c1e-4d6a-9a51-0a1c2d3e4f04",
       "components": {
-        "Name": { "value": "Tree" },
-        "Transform": { "position": [0, 0, -2.5], "rotation": [0, 0, 0, 1], "scale": [1.3, 1.3, 1.3] },
-        "MeshInstance": { "mesh": "asset:models/tree/tree.gltf#mesh0.0", "color": [0.32, 0.19, 0.09] },
-        "Spin": { "axis": [0, 1, 0], "speed": 0.3 }
+        "Name": {"value": "Tree"},
+        "Transform": {"position": [0, 0, -2.5], "rotation": [0, 0, 0, 1], "scale": [1.3, 1.3, 1.3]},
+        "MeshInstance": {"mesh": "asset:models/tree/tree.gltf#mesh0.0", "color": [0.32, 0.19, 0.09], "roughness": 0.8},
+        "Spin": {"axis": [0, 1, 0], "speed": 0.3}
       }
     },
     {
       "id": "3b2f6a10-6c1e-4d6a-9a51-0a1c2d3e4f05",
       "parent": "3b2f6a10-6c1e-4d6a-9a51-0a1c2d3e4f04",
       "components": {
-        "Name": { "value": "Canopy" },
-        "Transform": { "position": [0, 1, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] }
+        "Name": {"value": "Canopy"},
+        "Transform": {"position": [0, 1, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1]}
       }
     },
     {
       "id": "3b2f6a10-6c1e-4d6a-9a51-0a1c2d3e4f06",
       "parent": "3b2f6a10-6c1e-4d6a-9a51-0a1c2d3e4f05",
       "components": {
-        "Name": { "value": "Canopy [0]" },
-        "Transform": { "position": [0, 0, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] },
-        "MeshInstance": { "mesh": "asset:models/tree/tree.gltf#mesh1.0", "color": [0.13, 0.42, 0.14] }
+        "Name": {"value": "Canopy [0]"},
+        "Transform": {"position": [0, 0, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1]},
+        "MeshInstance": {"mesh": "asset:models/tree/tree.gltf#mesh1.0", "color": [0.13, 0.42, 0.14], "roughness": 0.8}
       }
     },
     {
       "id": "3b2f6a10-6c1e-4d6a-9a51-0a1c2d3e4f07",
       "parent": "3b2f6a10-6c1e-4d6a-9a51-0a1c2d3e4f05",
       "components": {
-        "Name": { "value": "Canopy [1]" },
-        "Transform": { "position": [0, 0, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] },
-        "MeshInstance": { "mesh": "asset:models/tree/tree.gltf#mesh1.1", "color": [0.24, 0.58, 0.2] }
+        "Name": {"value": "Canopy [1]"},
+        "Transform": {"position": [0, 0, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1]},
+        "MeshInstance": {"mesh": "asset:models/tree/tree.gltf#mesh1.1", "color": [0.24, 0.58, 0.2], "roughness": 0.8}
+      }
+    },
+    {
+      "id": "3b2f6a10-6c1e-4d6a-9a51-0a1c2d3e4f08",
+      "components": {
+        "Name": {"value": "Gold Sphere"},
+        "Transform": {"position": [0.2, 0.5, 1.6], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1]},
+        "MeshInstance": {"mesh": "asset:models/gold_sphere.glb#mesh0.0", "color": [1, 0.78, 0.34], "metallic": 1, "roughness": 0.25}
+      }
+    },
+    {
+      "id": "3b2f6a10-6c1e-4d6a-9a51-0a1c2d3e4f09",
+      "components": {
+        "Name": {"value": "Sun Light"},
+        "Transform": {"position": [4, 8, 4], "rotation": [-0.3535, 0.3535, 0.1464, 0.8536], "scale": [1, 1, 1]},
+        "Light": {"type": "directional", "color": [1, 0.96, 0.9], "intensity": 3, "shadows": true}
+      }
+    },
+    {
+      "id": "3b2f6a10-6c1e-4d6a-9a51-0a1c2d3e4f0a",
+      "components": {
+        "Name": {"value": "Lantern"},
+        "Transform": {"position": [2.6, 1.4, 1.8], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1]},
+        "Light": {"type": "point", "color": [1, 0.62, 0.3], "intensity": 6, "range": 6}
       }
     }
   ]

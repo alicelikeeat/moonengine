@@ -52,7 +52,23 @@
               "properties": {
                 "mesh": { "type": "string", "description": "Mesh name: builtin:cube or asset:<content path>#mesh<m>.<p>." },
                 "color": { "$ref": "#/$defs/vec3", "description": "Linear RGB, multiplied with the texture." },
-                "texture": { "type": "string", "description": "Base colour texture: builtin:white (default when absent) or asset:<content path>#texture<t>." }
+                "texture": { "type": "string", "description": "Base colour texture: builtin:white (default when absent) or asset:<content path>#texture<t>." },
+                "metallic": { "type": "number", "minimum": 0, "maximum": 1, "description": "0 = dielectric (default), 1 = metal." },
+                "roughness": { "type": "number", "minimum": 0, "maximum": 1, "description": "0 = mirror, 1 = matte. Default 0.5." },
+                "emissive": { "$ref": "#/$defs/vec3", "description": "Emitted linear RGB, added after lighting. Default [0, 0, 0]." },
+                "normal_texture": { "type": "string", "description": "Tangent-space normal map, e.g. asset:<path>#texture<t>.linear. Absent: none." },
+                "metallic_roughness_texture": { "type": "string", "description": "G = roughness, B = metallic multipliers (glTF layout), linear." }
+              },
+              "additionalProperties": false
+            },
+            "Light": {
+              "type": "object",
+              "properties": {
+                "type": { "enum": ["directional", "point"], "description": "Directional: travels along the entity's -Z. Point: from its position." },
+                "color": { "$ref": "#/$defs/vec3", "description": "Linear RGB." },
+                "intensity": { "type": "number", "minimum": 0, "description": "Directional: about 3 for daylight. Point: intensity at 1 m." },
+                "range": { "type": "number", "exclusiveMinimum": 0, "description": "Point lights: metres to fade out over." },
+                "shadows": { "type": "boolean", "description": "Directional lights: cast shadows (the first such light does)." }
               },
               "additionalProperties": false
             },

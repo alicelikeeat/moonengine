@@ -462,9 +462,9 @@ AETHER_TEST(headless_model_library_loads_spawns_and_renders_sample_models) {
     REQUIRE(lib.has_value());
     auto& library = *lib.value();
     const auto models = library.list_models();
-    REQUIRE(models.size() == 3u);
+    REQUIRE(models.size() == 4u);
     CHECK_EQ(models[0], std::string("models/crate.glb"));
-    CHECK_EQ(models[2], std::string("models/tree/tree.gltf"));
+    CHECK_EQ(models[3], std::string("models/tree/tree.gltf"));
 
     for (const auto& path : models) {
         auto m = library.load(path);
@@ -509,7 +509,18 @@ AETHER_TEST(headless_model_library_loads_spawns_and_renders_sample_models) {
     CHECK(c.r > 30);  // sRGB texels are linearised; the target stores linear values
     // Bounds feed picking: the crate is a unit box.
     MeshId crate_mesh = 0;
-    cw.each<MeshInstance>([&](Entity, MeshInstance& m) { crate_mesh = m.mesh; });
+    MeshInstance crate_material;
+    cw.each<MeshInstance>([&](Entity, MeshInstance& m) {
+        crate_mesh = m.mesh;
+        crate_material = m;
+    });
+    // The crate's material: colour, normal and metallic-roughness maps, the
+    // latter two uploaded as linear data under their own names.
+    CHECK(crate_material.normal_texture != kWhiteTexture);
+    CHECK(crate_material.metallic_roughness_texture != kWhiteTexture);
+    CHECK(crate_material.normal_texture != crate_material.texture);
+    CHECK_EQ(library.names().texture_name_of(crate_material.normal_texture).value_or(""),
+             std::string("asset:models/crate.glb#texture2.linear"));
     CHECK(crate_mesh != library.cube());
     CHECK(std::abs(library.bounds()[crate_mesh].max.x - 0.5f) < 1e-5f);
     CHECK_EQ(rig->renderer->validation_errors(), 0u);
