@@ -7,7 +7,7 @@ aether_add_module(render
         foundation
         world)
 # Vulkan stays private: the public headers expose no Vulkan types.
-target_link_libraries(aether_render PRIVATE aether_volk)
+target_link_libraries(aether_render PRIVATE aether_volk aether_imgui_vulkan)
 # `VkFooCreateInfo info{VK_STRUCTURE_TYPE_...}` value-initialises the other
 # members on purpose; GCC/Clang warn about it under -Wextra.
 if(NOT MSVC)

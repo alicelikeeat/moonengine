@@ -18,7 +18,12 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SHADER_DIR = ROOT / "engine" / "render" / "shaders"
 OUTPUT = ROOT / "engine" / "render" / "src" / "generated" / "shaders.inl"
-SHADERS = [("mesh.vert", "kMeshVertSpv"), ("mesh.frag", "kMeshFragSpv")]
+SHADERS = [
+    ("mesh.vert", "kMeshVertSpv"),
+    ("mesh.frag", "kMeshFragSpv"),
+    ("grid.vert", "kGridVertSpv"),
+    ("grid.frag", "kGridFragSpv"),
+]
 
 
 def compile_one(source: pathlib.Path, workdir: pathlib.Path) -> bytes:

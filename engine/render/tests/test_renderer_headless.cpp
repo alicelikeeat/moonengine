@@ -189,3 +189,51 @@ AETHER_TEST(headless_resize_and_errors) {
     CHECK_EQ(stats.value().draws, 0u);
     CHECK_EQ(rig->renderer->validation_errors(), 0u);
 }
+
+AETHER_TEST(headless_highlight_tints_only_the_selected_entity) {
+    auto rig = make_rig();
+    World w({.seed = 1});
+    const Vec3 color{0.2f, 0.4f, 0.8f};
+    const Entity left = spawn_cube(w, rig->cube, {-1.2f, 0, 0}, color);
+    spawn_cube(w, rig->cube, {1.2f, 0, 0}, color);
+    propagate_transforms(w);
+    Camera cam;
+    cam.position = {0, 0, 6};
+    RenderOptions options;
+    options.highlight = left;
+    REQUIRE(rig->renderer->render(w, cam, options).has_value());
+    auto px = rig->renderer->read_pixels();
+    REQUIRE(px.has_value());
+    const Rgb l = pixel(px.value(), 64, 18, 32);
+    const Rgb r = pixel(px.value(), 64, 46, 32);
+    // Same object colour and lighting; only the highlighted one shifts toward orange.
+    CHECK(l.r > r.r + 40);
+    CHECK(l.b < r.b);
+    CHECK_EQ(rig->renderer->validation_errors(), 0u);
+}
+
+AETHER_TEST(headless_grid_draws_on_the_ground_plane_only) {
+    auto rig = make_rig();
+    World w({.seed = 1});
+    Camera cam;
+    cam.position = {0.3f, 3, 8};
+    cam.target = {0.3f, 0, 0};
+    RenderOptions options;
+    options.grid = true;
+    REQUIRE(rig->renderer->render(w, cam, options).has_value());
+    auto px = rig->renderer->read_pixels();
+    REQUIRE(px.has_value());
+    // The horizon is where a view ray is parallel to the ground: the camera
+    // pitches down by atan(3/8), so it sits that far above the image centre.
+    const float pitch = std::atan(3.0f / 8.0f);
+    const float horizon_row = 32.0f - std::tan(pitch) / std::tan(cam.fov_y * 0.5f) * 32.0f;
+    int above = 0, below = 0;
+    for (std::uint32_t y = 0; y < 64; ++y)
+        for (std::uint32_t x = 0; x < 64; ++x)
+            if (!close(pixel(px.value(), 64, x, y), to_rgb8(kClear)))
+                (static_cast<float>(y) < horizon_row - 1.0f ? above : below)++;
+    // Looking down at the XZ plane: lines appear below the horizon only.
+    CHECK(below > 100);
+    CHECK_EQ(above, 0);
+    CHECK_EQ(rig->renderer->validation_errors(), 0u);
+}
