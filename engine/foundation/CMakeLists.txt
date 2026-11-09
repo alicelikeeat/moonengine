@@ -3,6 +3,7 @@ aether_add_module(foundation
         src/assert.cpp
         src/job_system.cpp
         src/lifecycle.cpp
+        src/json.cpp
         src/log.cpp
         src/math.cpp
         src/memory.cpp
@@ -19,6 +20,7 @@ if(AETHER_BUILD_TESTS)
     aether_add_test(aether_foundation_tests
         SOURCES
             tests/test_job_system.cpp
+            tests/test_json.cpp
             tests/test_lifecycle.cpp
             tests/test_log_trace.cpp
             tests/test_math.cpp
