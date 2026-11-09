@@ -1,6 +1,45 @@
 {
   "schema": 1,
-  "runtime": [],
+  "runtime": [
+    {
+      "name": "Vulkan-Headers",
+      "version": "1.4.304",
+      "license": "Apache-2.0 OR MIT",
+      "upstream": "https://github.com/KhronosGroup/Vulkan-Headers",
+      "commit": "d4a196d8c84e032d27f999adcea3075517c1c97f",
+      "vendored_path": "third_party/vulkan-headers",
+      "trimmed": "C headers only (include/vulkan/*.h, include/vk_video); C++ bindings removed",
+      "used_by": [
+        "engine/render",
+        "samples"
+      ]
+    },
+    {
+      "name": "volk",
+      "version": "1.4.304",
+      "license": "MIT",
+      "upstream": "https://github.com/zeux/volk",
+      "commit": "0b17a763ba5643e32da1b2152f8140461b3b7345",
+      "vendored_path": "third_party/volk",
+      "trimmed": "volk.c and volk.h only",
+      "used_by": [
+        "engine/render"
+      ]
+    },
+    {
+      "name": "GLFW",
+      "version": "3.4",
+      "license": "Zlib",
+      "upstream": "https://github.com/glfw/glfw",
+      "archive": "https://github.com/glfw/glfw/releases/download/3.4/glfw-3.4.zip",
+      "sha256": "b5ec004b2712fd08e8861dc271428f048775200a2df719ccf575143ba749a3e9",
+      "vendored_path": "third_party/glfw",
+      "trimmed": "CMakeLists.txt, CMake/, src/, include/, LICENSE.md; docs, examples, tests and deps/ removed",
+      "used_by": [
+        "samples"
+      ]
+    }
+  ],
   "tooling": [
     {
       "name": "jsonschema",
@@ -10,7 +49,20 @@
       "upstream": "https://github.com/python-jsonschema/jsonschema",
       "sha256": "fbadb6f8b144a8f8cf9f0b89ba94501d143e50411a1278633f56a7acf7fd5566",
       "artifact": "jsonschema-4.23.0-py3-none-any.whl",
-      "used_by": ["tools/validate_protocols.py"]
+      "used_by": [
+        "tools/validate_protocols.py"
+      ]
+    },
+    {
+      "name": "glslang (glslangValidator)",
+      "ecosystem": "system package",
+      "version": "15.1.0 (Ubuntu 24.04)",
+      "license": "BSD-3-Clause and others",
+      "upstream": "https://github.com/KhronosGroup/glslang",
+      "used_by": [
+        "tools/compile_shaders.py"
+      ],
+      "note": "Build-time only; generated SPIR-V is committed"
     }
   ]
 }
