@@ -12,7 +12,10 @@ This product includes third-party software, vendored under third_party/:
     (Apache-2.0 OR MIT)
   - volk 1.4.304, Copyright Arseny Kapoulkine (MIT)
   - GLFW 3.4, Copyright Marcus Geelnard and Camilla Löwy (Zlib),
-    used by sample applications only
+    used by applications (samples, editor) only
+  - Dear ImGui 1.91.5, Copyright Omar Cornut (MIT)
+  - ImGuizmo, Copyright Cedric Guillemet (MIT)
+  - Roboto font, Copyright Google (Apache-2.0)
 
 Full licence texts are in third_party/licenses/. Versions, upstream
 commits and archive hashes are recorded in third_party/dependencies.json.
