@@ -5,6 +5,9 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 ## [Unreleased]
 
 ### Added
+- World: scene hierarchy (`Parent`/`Children` with consistent two-way links, cycle rejection, `destroy_recursive`, `validate`), `Transform`/`GlobalTransform` and parallel `propagate_transforms`. 9 tests including a randomized forest checked against brute-force matrices and a 100,000-deep chain. ADR 0008.
+- World: `get<T>(entity, ComponentId)` fast path for hot loops.
+- Foundation: math library (Vec3, Quat, Mat4) with glTF-compatible conventions. 5 tests.
 - World module: archetype ECS with generational handles, UUID entity identity, named components, `each`/`par_each`/`count` queries, `CommandBuffer`, and a `Schedule` that runs systems with non-conflicting declared access in parallel. 21 tests including a randomized differential test against a reference model. ADR 0007.
 - Foundation: `Uuid` (v4 generation, parsing, formatting). 4 tests.
 - World micro-benchmarks.

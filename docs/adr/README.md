@@ -11,3 +11,4 @@ An ADR records one significant decision, its context and its consequences. ADRs 
 | 0005 | [Vulkan first, Metal native second, D3D12 later](0005-vulkan-first-rhi.md) | Accepted |
 | 0006 | [In-tree test harness, no third-party deps in Foundation](0006-in-tree-test-harness.md) | Accepted |
 | 0007 | [Archetype ECS with generational handles and UUID identity](0007-archetype-ecs.md) | Accepted |
+| 0008 | [Scene hierarchy as components with two-way links](0008-scene-hierarchy.md) | Accepted |

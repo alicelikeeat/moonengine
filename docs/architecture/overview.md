@@ -40,12 +40,13 @@ Rules:
 | Time | `time.hpp` | Stopwatch; integer-nanosecond fixed timestep |
 | Lifecycle | `lifecycle.hpp` | Init / run / pause / device lost / shutdown state machine |
 | UUID | `uuid.hpp` | v4 UUIDs for persistent identity of entities, scenes, assets |
+| Math | `math.hpp` | Vec3, Quat, Mat4 (right-handed, Y up, column-major, glTF conventions) |
 
 Not yet in Foundation (tracked in [ROADMAP.md](../../ROADMAP.md)): async file I/O, resource handles, crash dumps, and a lock-free work-stealing deque.
 
 ## World today
 
-Archetype ECS ([ADR 0007](../adr/0007-archetype-ecs.md)): generational `Entity` handles, UUID identity, named components, `each`/`par_each` queries, `CommandBuffer`, and a `Schedule` that runs non-conflicting systems in parallel. Details in [`engine/world/MODULE.md`](../../engine/world/MODULE.md).
+Archetype ECS ([ADR 0007](../adr/0007-archetype-ecs.md)): generational `Entity` handles, UUID identity, named components, `each`/`par_each` queries, `CommandBuffer`, a `Schedule` that runs non-conflicting systems in parallel, and a scene hierarchy with transform propagation ([ADR 0008](../adr/0008-scene-hierarchy.md)). Details in [`engine/world/MODULE.md`](../../engine/world/MODULE.md).
 
 ## Verification
 
