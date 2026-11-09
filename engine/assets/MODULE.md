@@ -13,7 +13,8 @@ Importers that turn files into renderer-independent data. No GPU code.
 | --- | --- |
 | `load_gltf_file(path)` | Imports `.gltf` (with external or embedded buffers) and `.glb` |
 | `parse_gltf`, `parse_glb` | The same from memory; `base_dir` resolves relative URIs (empty: none allowed) |
-| `Model`, `Mesh`, `Primitive`, `Material`, `Node`, `TextureImage` | Imported data: triangle lists, base colour factor and texture, node TRS hierarchy |
+| `Model`, `Mesh`, `Primitive`, `Material`, `Node`, `TextureImage` | Imported data: triangle lists with tangents, metallic-roughness materials (factors, base colour, metallic-roughness and normal textures, emission), node TRS hierarchy |
+| `generate_tangents` | Tangents from UVs when a file has none (bitangent points up the image, as glTF expects) |
 | `ImportOptions` | Limits: file size, total vertices, texture size |
 | `decode_image`, `decode_base64` | PNG/JPEG to RGBA8; base64 for data URIs |
 
@@ -26,4 +27,4 @@ Importers that turn files into renderer-independent data. No GPU code.
 
 ## Not yet implemented
 
-Skins, morph targets and animations; metallic-roughness, normal, occlusion and emissive maps; KTX2/Basis textures; Draco and meshopt compression; sparse accessors; multiple scenes (only the default scene is imported); an asset database with content hashes and import caching.
+Skins, morph targets and animations; occlusion and emissive maps; normal map scale in the renderer; KTX2/Basis textures; Draco and meshopt compression; sparse accessors; multiple scenes (only the default scene is imported); an asset database with content hashes and import caching.

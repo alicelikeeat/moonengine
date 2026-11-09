@@ -15,12 +15,12 @@ This is a young project. Here is exactly what exists today and what does not.
 | Foundation: allocators, work-stealing jobs, logging, tracing, time, lifecycle, UUIDs, math, JSON | ✅ Implemented and tested (51 tests) |
 | World: archetype ECS, queries, command buffers, parallel system schedule, scene hierarchy, transforms, level files | ✅ Implemented and tested (38 tests) |
 | Aether Control Protocol (ACP) for tools and AI agents | 📝 Draft 0.1 schemas + validator |
-| Assets: glTF 2.0 import (meshes, hierarchy, base colour, PNG/JPEG textures), fuzz-tested | ✅ First slice (7 tests) |
-| Render: Vulkan 1.3 renderer, windowed and headless, textures, model library | ✅ First slice, tested on software Vulkan (17 tests) |
-| Editor: viewport + gizmos, outliner, details, content browser, undo/redo, play-in-editor, save/open levels | ✅ Usable preview (15 tests) |
+| Assets: glTF 2.0 import (meshes, hierarchy, PBR materials, normal maps, PNG/JPEG textures), fuzz-tested | ✅ First slice (9 tests) |
+| Render: Vulkan 1.3 renderer, windowed and headless; PBR materials, lights, sun shadows; model library | ✅ Tested with pixel checks on software Vulkan (25 tests) |
+| Editor: viewport + gizmos, outliner, details, content browser, lights and materials, undo/redo, play-in-editor, save/open levels | ✅ Usable preview (15 tests) |
 | Level files: documented JSON format v1 with schema and migrations | ✅ Done |
 | Sample app: `samples/spinning_cubes` | ✅ Runs; needs a Vulkan 1.3 GPU driver |
-| PBR materials, asset database, Physics, Animation, AI agents | ⏳ Not started — see [ROADMAP.md](ROADMAP.md) |
+| Asset database, Physics, Animation, AI agents | ⏳ Not started — see [ROADMAP.md](ROADMAP.md) |
 
 There is a first renderer, a level editor that saves and opens levels, and a runtime that plays them. Claims about performance versus other engines will only be made with published, reproducible benchmarks.
 

@@ -4,6 +4,23 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-09
+
+Physically based materials, lights and shadows.
+
+### Added
+- Renderer: metallic-roughness PBR (GGX, height-correlated Smith, Schlick), normal maps, emission, hemisphere sky light with split-sum specular, ACES tone mapping with exposure. ADR 0013.
+- `Light` component: directional (first one casts shadows) and up to 16 point lights with range falloff; default sun when a world has no lights. Saved in levels.
+- Sun shadows: 2048² shadow map fitted around nearby casters, texel-snapped, normal-offset and slope bias, PCF.
+- `MeshInstance` material fields: metallic, roughness, emissive, normal and metallic-roughness textures (written only when not default).
+- glTF import: metallic and roughness factors, metallic-roughness and normal textures, emissive factor, tangents (read or generated). Textures are uploaded as sRGB or linear data by use.
+- Editor: Directional and Point Light in Place Actors and Add Component; light icons in the viewport (click to select; the sun shows its direction); light and material editing in Details; World Settings panel (sky light, exposure, shadows); Stats shows shadow draws and lights.
+- Demo level: glowing sun with a point light, metal moons, shadow-casting daylight. Sample content: crate with normal and metallic-roughness maps, polished gold sphere; `model_garden` has a sun and a lantern.
+- Pixel tests for light direction, default sun, emission, metal vs dielectric, normal maps, point light range and shadows; serialisation tests for materials and lights. 140 tests.
+
+### Changed
+- Vertices are 48 bytes (tangent added). Textures are one array per frame descriptor set (limit 1,024). Devices must support dynamic indexing of sampled image arrays.
+
 ## [0.4.0] - 2026-11-09
 
 Real 3D models: glTF import, a Content Browser, and textures.

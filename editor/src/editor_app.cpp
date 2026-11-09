@@ -52,7 +52,7 @@ constexpr const char* kContent = "Content Browser";
 constexpr const char* kWorldSettings = "World Settings";
 constexpr const char* kAssetDrag = "AETHER_ASSET";
 constexpr const char* kOutlinerDrag = "AETHER_ENTITY";
-constexpr const char* kGenerator = "Aether Editor 0.4.0";
+constexpr const char* kGenerator = "Aether Editor 0.5.0";
 
 namespace fs = std::filesystem;
 
