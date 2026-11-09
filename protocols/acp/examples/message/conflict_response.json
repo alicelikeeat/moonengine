@@ -1,0 +1,11 @@
+{
+  "acp": "0.1",
+  "kind": "response",
+  "id": "req-43",
+  "error": {
+    "code": 11,
+    "name": "conflict",
+    "message": "base_version 118 is stale; current project version is 121",
+    "data": { "current_version": 121 }
+  }
+}

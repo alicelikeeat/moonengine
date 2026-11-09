@@ -1,0 +1,1 @@
+{ "acp": "0.1", "kind": "request", "id": "req-1", "method": "engine.discover", "scopes": ["engine:read"] }

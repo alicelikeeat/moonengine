@@ -1,0 +1,18 @@
+{
+  "acp": "0.1",
+  "kind": "request",
+  "id": "req-42",
+  "method": "entity.create",
+  "scopes": ["entity:write"],
+  "params": {
+    "scene": "scn_7f3a9c21d4e8",
+    "name": "Street Lamp",
+    "components": {
+      "transform": { "position": [12.0, 0.0, -4.5], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] },
+      "mesh": { "asset": "ast_lamp_post_01" }
+    }
+  },
+  "transaction": { "changeset_id": "cs_01HZX4K9QW", "base_version": 118 },
+  "idempotency_key": "agent-run-77-step-3",
+  "timeout_ms": 5000
+}

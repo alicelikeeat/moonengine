@@ -1,0 +1,11 @@
+/build/
+/out/
+/.vs/
+/.vscode/
+/.idea/
+/.cache/
+CMakeUserPresets.json
+compile_commands.json
+*.swp
+__pycache__/
+.DS_Store

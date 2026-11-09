@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aether-engine.dev/acp/0.1/changeset.schema.json",
+  "title": "ACP changeset",
+  "description": "Audit record for one committed or rolled-back transaction. Every write is part of exactly one changeset.",
+  "type": "object",
+  "required": ["changeset_id", "base_version", "status", "author", "operations", "created_at"],
+  "properties": {
+    "changeset_id": { "type": "string", "pattern": "^cs_[0-9a-zA-Z]{8,64}$" },
+    "base_version": { "type": "integer", "minimum": 0 },
+    "result_version": { "type": "integer", "minimum": 1 },
+    "status": { "enum": ["open", "committed", "rolled_back", "rejected"] },
+    "author": {
+      "type": "object",
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": { "enum": ["human", "agent", "script"] },
+        "id": { "type": "string" },
+        "role": {
+          "enum": ["architect", "planner", "implementer", "reviewer", "tester", "performance", "security", "integrator"]
+        },
+        "model": {
+          "type": "object",
+          "description": "Provenance for AI-authored changes.",
+          "required": ["provider", "name"],
+          "properties": {
+            "provider": { "type": "string" },
+            "name": { "type": "string" },
+            "version": { "type": "string" },
+            "local": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "summary": { "type": "string" },
+    "operations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["method", "target", "inverse"],
+        "properties": {
+          "method": { "type": "string" },
+          "target": {
+            "type": "string",
+            "description": "Stable identifier (entity/asset/scene GUID). Never a memory address."
+          },
+          "params": { "type": "object" },
+          "inverse": {
+            "type": "object",
+            "description": "The operation that undoes this one; rollback replays inverses in reverse order.",
+            "required": ["method"],
+            "properties": { "method": { "type": "string" }, "params": { "type": "object" } }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "rollback_of": { "type": "string", "pattern": "^cs_[0-9a-zA-Z]{8,64}$" },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "committed" } } },
+      "then": { "required": ["result_version"] }
+    }
+  ],
+  "additionalProperties": false
+}

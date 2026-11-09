@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: CI only reads the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: ${{ matrix.preset }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, preset: linux-gcc, build: linux-gcc, test: linux-gcc }
+          - { os: ubuntu-24.04, preset: linux-clang, build: linux-clang, test: linux-clang }
+          - { os: ubuntu-24.04, preset: linux-asan, build: linux-asan, test: linux-asan }
+          - { os: ubuntu-24.04, preset: linux-tsan, build: linux-tsan, test: linux-tsan }
+          - { os: windows-2022, preset: windows-msvc, build: windows-msvc-debug, test: windows-msvc-debug }
+          - { os: windows-2022, preset: windows-msvc, build: windows-msvc-release, test: windows-msvc-release }
+    steps:
+      # Actions are pinned to full commit SHAs (supply-chain hardening).
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install Ninja
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - name: Allow ThreadSanitizer to map its shadow memory
+        if: matrix.preset == 'linux-tsan'
+        run: sudo sysctl vm.mmap_rnd_bits=28
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.build }}
+
+      - name: Test
+        run: ctest --preset ${{ matrix.test }}
+
+      - name: Repeat concurrency tests
+        if: matrix.preset == 'linux-tsan'
+        run: |
+          for i in $(seq 20); do
+            ./build/linux-tsan/engine/foundation/aether_foundation_tests job
+          done
+
+  protocols:
+    name: ACP schemas
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - run: python3 -m pip install --user -r tools/requirements.txt
+      - run: python3 tools/validate_protocols.py
+
+  dco:
+    name: DCO sign-off
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check every commit is signed off
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: python3 tools/check_dco.py "$BASE" "$HEAD"
