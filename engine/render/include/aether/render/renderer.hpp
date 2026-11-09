@@ -23,6 +23,7 @@
 #include "aether/foundation/math.hpp"
 #include "aether/foundation/result.hpp"
 #include "aether/render/camera.hpp"
+#include "aether/render/light.hpp"
 #include "aether/render/mesh.hpp"
 #include "aether/world/world.hpp"
 
@@ -50,9 +51,21 @@ struct RendererDesc {
     bool enable_ui = false;
 };
 
+// Image-wide lighting not tied to an entity.
+struct Environment {
+    // Ambient light from above and below (a hemisphere "sky light"); also
+    // what metals reflect, since there is no environment map yet.
+    math::Vec3 sky_color{0.42f, 0.52f, 0.68f};
+    math::Vec3 ground_color{0.16f, 0.14f, 0.12f};
+    float ambient_intensity = 1.0f;
+    float exposure = 1.0f;  // applied before ACES tone mapping
+    bool shadows = true;    // directional shadow map on/off
+};
+
 struct RenderOptions {
     world::Entity highlight = world::kNullEntity;  // drawn with the selection tint
     bool grid = false;                             // ground grid on the XZ plane
+    Environment environment;
 };
 
 struct GpuInfo {
@@ -63,7 +76,10 @@ struct GpuInfo {
 };
 
 struct FrameStats {
-    std::uint32_t draws = 0;
+    std::uint32_t draws = 0;          // scene draws (not counting the shadow pass)
+    std::uint32_t shadow_draws = 0;   // draws into the shadow map
+    std::uint32_t point_lights = 0;   // point lights used this frame
+    bool sun_shadows = false;         // a directional shadow map was rendered
     bool presented = false;  // false when skipped (minimised, swapchain rebuilt)
 };
 

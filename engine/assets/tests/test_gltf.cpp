@@ -177,6 +177,13 @@ AETHER_TEST(gltf_with_data_uri_loads_mesh_material_nodes) {
     CHECK(math::near(p.normals[0], math::Vec3{0, 0, 1}));
     CHECK_EQ(p.material, 0);
     CHECK(m.materials[0].base_color[1] == 0.25f);
+    // glTF defaults: fully metallic and rough unless the factors say otherwise.
+    CHECK(m.materials[0].metallic == 1.0f && m.materials[0].roughness == 1.0f);
+    CHECK_EQ(m.materials[0].normal_texture, -1);
+    // Generated tangent: +X follows u; bitangent cross(N, T) * w = +Y points
+    // up the image (v decreases with y on this quad).
+    REQUIRE(p.tangents.size() == 4u);
+    for (const auto& t : p.tangents) CHECK(t[0] > 0.999f && std::abs(t[1]) < 1e-5f && t[3] == 1.0f);
     REQUIRE(m.nodes.size() == 2);
     CHECK(m.roots == std::vector<int>{0});
     CHECK(m.nodes[0].children == std::vector<int>{1});
@@ -306,4 +313,71 @@ AETHER_TEST(glb_fuzz_never_crashes) {
         }
     }
     std::printf("    %d of 3000 mutated GLB files were accepted (all with valid indices)\n", accepted);
+}
+
+AETHER_TEST(gltf_reads_pbr_material_channels_and_tangents) {
+    Builder b;
+    Json doc = b.quad_document();
+    // Supplied tangents (unnormalised, negative handedness) need supplied normals.
+    const auto nrm = b.add(std::vector<float>{0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1}, 5126, "VEC3", 4);
+    const auto tan = b.add(std::vector<float>{0, 2, 0, -1, 0, 2, 0, -1, 0, 2, 0, -1, 0, 2, 0, -1}, 5126, "VEC4", 4);
+    doc.set("bufferViews", b.views);
+    doc.set("accessors", b.accessors);
+    Json& attrs = const_cast<Json&>(*doc.find("meshes")->as_array()[0].find("primitives")->as_array()[0].find("attributes"));
+    attrs.set("NORMAL", static_cast<std::uint64_t>(nrm));
+    attrs.set("TANGENT", static_cast<std::uint64_t>(tan));
+    doc.set("images", parse_json(R"([{"uri": "data:image/png;base64,)" + base64(kPng) + R"("}])").value());
+    doc.set("textures", parse_json(R"([{"source": 0}, {"source": 0}, {"source": 0}])").value());
+    doc.set("materials", parse_json(R"([{"name": "Steel",
+        "pbrMetallicRoughness": {"metallicFactor": 0.75, "roughnessFactor": 0.3, "baseColorTexture": {"index": 0},
+                                 "metallicRoughnessTexture": {"index": 1}},
+        "normalTexture": {"index": 2, "scale": 0.5},
+        "occlusionTexture": {"index": 0},
+        "emissiveFactor": [1, 0.5, 0]}])").value());
+    auto model = parse_gltf(b.as_gltf_with_data_uri(doc), {});
+    if (!model) std::fprintf(stderr, "    %s\n", model.error().message.c_str());
+    REQUIRE(model.has_value());
+    const Material& mat = model.value().materials[0];
+    CHECK(mat.metallic == 0.75f && mat.roughness == 0.3f);
+    CHECK_EQ(mat.base_color_texture, 0);
+    CHECK_EQ(mat.metallic_roughness_texture, 1);
+    CHECK_EQ(mat.normal_texture, 2);
+    CHECK(mat.normal_scale == 0.5f);
+    CHECK(mat.emissive == (math::Vec3{1, 0.5f, 0}));
+    CHECK_EQ(model.value().warnings.size(), std::size_t{1});  // occlusion ignored
+    const auto& t = model.value().meshes[0].primitives[0].tangents;
+    REQUIRE(t.size() == 4u);
+    CHECK(std::abs(t[0][1] - 1.0f) < 1e-6f && t[0][3] == -1.0f);
+
+    // Out-of-range factors are clamped, malformed ones rejected.
+    doc.set("materials", parse_json(R"([{"pbrMetallicRoughness": {"metallicFactor": 3, "roughnessFactor": -1}}])").value());
+    auto clamped = parse_gltf(b.as_gltf_with_data_uri(doc), {});
+    REQUIRE(clamped.has_value());
+    CHECK(clamped.value().materials[0].metallic == 1.0f && clamped.value().materials[0].roughness == 0.0f);
+    doc.set("materials", parse_json(R"([{"pbrMetallicRoughness": {"roughnessFactor": "rough"}}])").value());
+    CHECK(!parse_gltf(b.as_gltf_with_data_uri(doc), {}));
+}
+
+AETHER_TEST(generated_tangents_follow_uvs_and_survive_degenerate_input) {
+    Primitive p;
+    // Quad in XZ facing +Y, u along -Z, v along -X (rotated mapping).
+    p.positions = {{0, 0, 0}, {0, 0, -1}, {-1, 0, -1}, {-1, 0, 0}};
+    p.normals.assign(4, math::Vec3{0, 1, 0});
+    p.uvs = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+    p.indices = {0, 1, 2, 0, 2, 3};
+    generate_tangents(p);
+    REQUIRE(p.tangents.size() == 4u);
+    for (const auto& t : p.tangents) {
+        CHECK(std::abs(t[2] + 1.0f) < 1e-5f);  // T = -Z
+        // Image up (decreasing v) is +X here: cross(+Y, -Z) = -X, so w = -1.
+        CHECK(t[3] == -1.0f);
+    }
+    // All UVs equal: still unit, perpendicular tangents.
+    p.uvs.assign(4, {0.5f, 0.5f});
+    generate_tangents(p);
+    for (const auto& t : p.tangents) {
+        const math::Vec3 v{t[0], t[1], t[2]};
+        CHECK(std::abs(math::length(v) - 1.0f) < 1e-5f);
+        CHECK(std::abs(math::dot(v, math::Vec3{0, 1, 0})) < 1e-5f);
+    }
 }

@@ -23,6 +23,7 @@ SHADERS = [
     ("mesh.frag", "kMeshFragSpv"),
     ("grid.vert", "kGridVertSpv"),
     ("grid.frag", "kGridFragSpv"),
+    ("shadow.vert", "kShadowVertSpv"),
 ]
 
 

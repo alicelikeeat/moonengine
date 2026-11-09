@@ -15,6 +15,20 @@ AETHER_TEST(cube_has_outward_ccw_faces) {
         CHECK(near(length(v.normal), 1.0f));
         CHECK(near(dot(v.position, v.normal), 1.0f));  // on its face plane, half-size 1
         CHECK(std::fabs(v.position.x) <= 1.0f && std::fabs(v.position.y) <= 1.0f && std::fabs(v.position.z) <= 1.0f);
+        // Tangent follows +u and the bitangent cross(n, t) * w points up the image (-v).
+        const Vec3 t{v.tangent[0], v.tangent[1], v.tangent[2]};
+        CHECK(near(length(t), 1.0f) && near(dot(t, v.normal), 0.0f) && v.tangent[3] == 1.0f);
+    }
+    // Check the frame against the UVs of one face: moving along t raises u,
+    // moving along the bitangent lowers v.
+    for (std::size_t f = 0; f < 6; ++f) {
+        const Vertex& a = cube.vertices[f * 4];      // (-u, -v) corner
+        const Vertex& b = cube.vertices[f * 4 + 1];  // (+u, -v)
+        const Vertex& d = cube.vertices[f * 4 + 3];  // (-u, +v)
+        const Vec3 t{a.tangent[0], a.tangent[1], a.tangent[2]};
+        const Vec3 bt = cross(a.normal, t) * a.tangent[3];
+        CHECK(dot(b.position - a.position, t) > 0 && b.uv[0] > a.uv[0]);
+        CHECK(dot(d.position - a.position, bt) > 0 && d.uv[1] < a.uv[1]);
     }
     for (std::size_t i = 0; i < cube.indices.size(); i += 3) {
         const Vertex& a = cube.vertices[cube.indices[i]];
