@@ -17,7 +17,7 @@ Releases are built by GitHub Actions from a tagged commit, so every binary is tr
 6. `.github/workflows/release.yml` then:
    - checks the tag matches `VERSION` and that release notes exist,
    - builds and tests the Windows Release configuration,
-   - packages the demo with `LICENSE`, `NOTICE` and third-party licences,
+   - packages the demo with `LICENSE`, `NOTICE` and third-party licences using `tools/package_windows.ps1` (the same script runs in every CI build, so packaging is tested before a release),
    - attaches the zip, the dependency manifest and `SHA256SUMS.txt` to a new GitHub Release.
 
 Versions below 1.0 are published as pre-releases.
