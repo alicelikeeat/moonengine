@@ -28,6 +28,10 @@ struct MeshData {
 // Axis-aligned cube centred on the origin, 24 vertices with flat normals.
 [[nodiscard]] MeshData make_cube(float size = 1.0f);
 
+// UV sphere centred on the origin with smooth normals; u wraps around the
+// Y axis, v runs from the top pole (0) to the bottom (1).
+[[nodiscard]] MeshData make_sphere(float radius = 0.5f, std::uint32_t rings = 24, std::uint32_t segments = 48);
+
 struct Aabb {
     math::Vec3 min{};
     math::Vec3 max{};

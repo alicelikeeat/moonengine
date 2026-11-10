@@ -103,6 +103,12 @@ Result<std::unique_ptr<ModelLibrary>> ModelLibrary::create(Renderer& renderer, s
     lib->cube_ = id.value();
     lib->track_bounds(lib->cube_, compute_bounds(cube));
     lib->names_.add(std::string(kBuiltinCube), lib->cube_);
+    const MeshData sphere = make_sphere();
+    auto sphere_id = renderer.upload_mesh(sphere);
+    if (!sphere_id) return sphere_id.error();
+    lib->sphere_ = sphere_id.value();
+    lib->track_bounds(lib->sphere_, compute_bounds(sphere));
+    lib->names_.add(std::string(kBuiltinSphere), lib->sphere_);
     ModelLibrary* self = lib.get();
     lib->names_.set_resolver([self](std::string_view name) { self->resolve(name); });
     return lib;

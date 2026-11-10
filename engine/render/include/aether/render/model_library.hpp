@@ -57,7 +57,7 @@ struct LoadedModel {
 
 class ModelLibrary {
 public:
-    // Uploads the builtin cube; fails only if that upload fails.
+    // Uploads the builtin cube and sphere; fails only if an upload fails.
     static Result<std::unique_ptr<ModelLibrary>> create(Renderer& renderer, std::filesystem::path content_root,
                                                         Logger* logger = nullptr);
     ~ModelLibrary();
@@ -66,6 +66,7 @@ public:
 
     [[nodiscard]] const std::filesystem::path& content_root() const noexcept { return root_; }
     [[nodiscard]] MeshId cube() const noexcept { return cube_; }
+    [[nodiscard]] MeshId sphere() const noexcept { return sphere_; }  // "builtin:sphere", radius 0.5
     [[nodiscard]] const MeshRegistry& names() const noexcept { return names_; }
     // Local bounds indexed by MeshId (zero box for ids it did not upload).
     [[nodiscard]] const std::vector<Aabb>& bounds() const noexcept { return bounds_; }
@@ -97,6 +98,7 @@ private:
     Logger* logger_;
     MeshRegistry names_;
     MeshId cube_ = 0;
+    MeshId sphere_ = 0;
     std::vector<Aabb> bounds_;
     std::unordered_map<std::string, std::unique_ptr<LoadedModel>> loaded_;
     std::unordered_map<std::string, Error> failed_;

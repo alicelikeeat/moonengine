@@ -1,6 +1,7 @@
 #include "aether/render/mesh.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace aether::render {
@@ -32,6 +33,31 @@ MeshData make_cube(float size) {
             mesh.vertices.push_back({c + f.u * (su * h) + f.v * (sv * h), f.normal, {(su + 1) * 0.5f, (1 - sv) * 0.5f},
                                      {f.u.x, f.u.y, f.u.z, 1.0f}});
         for (const std::uint32_t i : {0u, 1u, 2u, 0u, 2u, 3u}) mesh.indices.push_back(base + i);
+    }
+    return mesh;
+}
+
+MeshData make_sphere(float radius, std::uint32_t rings, std::uint32_t segments) {
+    rings = std::max(rings, 2u);
+    segments = std::max(segments, 3u);
+    MeshData mesh;
+    mesh.vertices.reserve(std::size_t{rings + 1} * (segments + 1));
+    for (std::uint32_t i = 0; i <= rings; ++i) {
+        const float v = static_cast<float>(i) / static_cast<float>(rings);
+        const float theta = math::kPi * v;
+        for (std::uint32_t j = 0; j <= segments; ++j) {
+            const float u = static_cast<float>(j) / static_cast<float>(segments);
+            const float phi = 2.0f * math::kPi * u;
+            const math::Vec3 n{std::sin(theta) * std::cos(phi), std::cos(theta), -std::sin(theta) * std::sin(phi)};
+            // Tangent: direction of increasing u (around the Y axis).
+            mesh.vertices.push_back({n * radius, n, {u, v}, {-std::sin(phi), 0.0f, -std::cos(phi), 1.0f}});
+        }
+    }
+    for (std::uint32_t i = 0; i < rings; ++i) {
+        for (std::uint32_t j = 0; j < segments; ++j) {
+            const std::uint32_t a = i * (segments + 1) + j, b = a + segments + 1;
+            for (const std::uint32_t k : {a, b, b + 1, a, b + 1, a + 1}) mesh.indices.push_back(k);
+        }
     }
     return mesh;
 }

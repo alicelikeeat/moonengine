@@ -62,3 +62,25 @@ AETHER_TEST(look_at_moves_eye_to_origin) {
     CHECK(target_in_view.z < 0);  // camera looks down -Z
     CHECK(near(target_in_view.x, 0) && near(target_in_view.y, 0));
 }
+
+AETHER_TEST(sphere_has_outward_ccw_faces_and_unit_frame) {
+    const MeshData sphere = make_sphere(2.0f, 8, 16);
+    CHECK_EQ(sphere.vertices.size(), std::size_t{9 * 17});
+    CHECK_EQ(sphere.indices.size(), std::size_t{8 * 16 * 6});
+    for (const Vertex& v : sphere.vertices) {
+        CHECK(near(length(v.position), 2.0f));
+        CHECK(near(v.position, v.normal * 2.0f));
+        const Vec3 t{v.tangent[0], v.tangent[1], v.tangent[2]};
+        CHECK(near(length(t), 1.0f) && std::fabs(dot(t, v.normal)) < 1e-5f);
+    }
+    for (std::size_t i = 0; i < sphere.indices.size(); i += 3) {
+        const Vec3 a = sphere.vertices[sphere.indices[i]].position;
+        const Vec3 b = sphere.vertices[sphere.indices[i + 1]].position;
+        const Vec3 c = sphere.vertices[sphere.indices[i + 2]].position;
+        const Vec3 n = cross(b - a, c - a);
+        if (length(n) < 1e-6f) continue;  // degenerate triangles at the poles
+        CHECK(dot(n, a + b + c) > 0);     // counter-clockwise seen from outside
+    }
+    const Aabb box = compute_bounds(sphere);
+    CHECK(near(box.min, Vec3{-2, -2, -2}) && near(box.max, Vec3{2, 2, 2}));
+}

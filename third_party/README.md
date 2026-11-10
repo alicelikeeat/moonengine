@@ -10,6 +10,7 @@ Foundation and World use only the C++ standard library and OS APIs (ADR 0006). T
 | [Dear ImGui](https://github.com/ocornut/imgui) | 1.91.5 docking | MIT | render (UI pass), editor | Immediate-mode UI for the editor and debug overlays |
 | [ImGuizmo](https://github.com/CedricGuillemet/ImGuizmo) | pinned commit | MIT | editor | Translate/rotate/scale gizmos |
 | [Roboto](https://fonts.google.com/specimen/Roboto) Medium | from ImGui misc/fonts | Apache-2.0 | editor | UI font, embedded in the executable |
+| [Jolt Physics](https://github.com/jrouwe/JoltPhysics) | 5.3.0 | MIT | simulation | Rigid body simulation and collision detection (ADR 0015) |
 | [stb_image](https://github.com/nothings/stb) | 2.30 | MIT OR Unlicense | assets | PNG and JPEG decoding for model textures (other decoders compiled out) |
 
 The engine library never links GLFW; windowing stays in applications. The render module links Dear ImGui only to draw an optional UI layer.

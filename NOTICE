@@ -17,6 +17,7 @@ This product includes third-party software, vendored under third_party/:
   - ImGuizmo, Copyright Cedric Guillemet (MIT)
   - Roboto font, Copyright Google (Apache-2.0)
   - stb_image 2.30, Copyright Sean Barrett (MIT, or public domain)
+  - Jolt Physics 5.3.0, Copyright Jorrit Rouwe (MIT)
 
 Full licence texts are in third_party/licenses/. Versions, upstream
 commits and archive hashes are recorded in third_party/dependencies.json.

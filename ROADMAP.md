@@ -61,8 +61,11 @@ Render
 ## M3 — AI-native workflow
 ACP server over stdio and loopback WebSocket; scene query, transactional edits, rollback; model provider interface with a no-AI mode and a local open-weights provider; agent roles (planner, implementer, reviewer, tester) with budget and audit logs.
 
-## M4 — Complete game runtime
-Physics (evaluate Jolt Physics, MIT) behind an engine interface, skeletal animation and animation graph, sandboxed scripting, a packaged sample game.
+## M4 — Complete game runtime · 🚧 Started
+
+- [x] Rigid body physics on Jolt Physics behind the Simulation module: box, sphere and capsule colliders; static, dynamic and kinematic bodies; raycasts; saved in levels; simulated in the editor's Play mode and the runtime (v0.7.0)
+- [ ] Mesh and convex colliders, joints, character controller, triggers and contact events
+- [ ] Skeletal animation and animation graph, sandboxed scripting, a packaged sample game
 
 ## M5 — Cross-platform
 Linux parity, native Metal backend, iOS device validation, published platform differences.

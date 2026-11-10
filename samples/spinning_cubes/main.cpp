@@ -36,6 +36,7 @@
 #include "aether/render/light.hpp"
 #include "aether/render/mesh_registry.hpp"
 #include "aether/render/model_library.hpp"
+#include "aether/simulation/physics.hpp"
 
 using namespace aether;
 using namespace aether::math;
@@ -200,6 +201,7 @@ int main(int argc, char** argv) {
             SerializerRegistry registry;
             register_core_components(registry);
             render::register_components(registry, library.value()->names());
+            simulation::register_components(registry);
             gameplay::register_components(registry);
             auto report = load_level_file(opt.level, world, registry);
             if (!report) {
@@ -212,6 +214,12 @@ int main(int argc, char** argv) {
 
         Schedule schedule;
         gameplay::add_systems(schedule, world);
+        // Rigid bodies and colliders in the level simulate at the fixed step.
+        auto physics = simulation::PhysicsWorld::create({.logger = &logger});
+        if (!physics) {
+            std::fprintf(stderr, "%s\n", physics.error().message.c_str());
+            return 1;
+        }
 
         JobSystem jobs;
         FixedTimestep clock(16'666'667);  // 60 Hz simulation
@@ -228,7 +236,10 @@ int main(int argc, char** argv) {
 
             const auto steps = clock.advance(frame_timer.elapsed_ns());
             frame_timer.restart();
-            for (std::uint32_t i = 0; i < steps.steps; ++i) schedule.run(world, &jobs, clock.step_seconds());
+            for (std::uint32_t i = 0; i < steps.steps; ++i) {
+                schedule.run(world, &jobs, clock.step_seconds());
+                physics.value()->step(world, static_cast<float>(clock.step_seconds()));
+            }
             propagate_transforms(world, &jobs);
 
             auto rendered = renderer->render(world, camera);

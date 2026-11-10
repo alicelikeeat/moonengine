@@ -14,7 +14,7 @@ Opens with a demo level (a small solar system). Panels can be dragged, docked an
 | Outliner | Scene tree. Click to select, drag onto another item to attach, drag to empty space to detach, right-click for actions, search box filters by name |
 | Details | Name, Location / Rotation / Scale, material (colour, metallic, roughness, emission), light settings, Spin, add/remove components |
 | World Settings | The level's sky (zenith, horizon and ground colours, brightness, show/hide), exposure and sun shadows; saved with the level (tab next to Details) |
-| Place Actors | Add a Cube, Spinning Cube, Empty actor, Directional Light (sun), Point Light or the level's Sky & Environment |
+| Place Actors | Add a Cube, Sphere, Spinning Cube, Empty actor, Physics Cube, Physics Sphere, Directional Light (sun), Point Light or the level's Sky & Environment |
 | Content Browser | 3D models (`.gltf`, `.glb`) in the `Content` folder. Double-click to add one at the view focus, or drag it into the Viewport to place it on the ground |
 | Output Log | Engine and editor messages, filterable |
 | Stats | Frame time graph, GPU, draw calls, entity counts |
@@ -48,6 +48,15 @@ Layout is saved to `aether_editor.ini` next to where the editor was started.
 Lights are actors: add a **Directional Light** (sunlight; rotate it to aim, the first one casts shadows) or a **Point Light** (a bulb with a range) from Place Actors. They show as icons in the viewport; click one to select it and edit colour, intensity and range in Details. A level without lights uses a default sun.
 
 The sky lights the scene from all directions and shows in reflections on smooth and metallic surfaces. Change it in **World Settings**; if the level has no Environment yet, add one there or with *Place Actors > Sky & Environment*. The sun's disc appears in the sky where the first Directional Light points from.
+
+### Physics
+
+Press **Play** (Alt+P) and objects with a **Rigid Body** fall, collide and stack; **Stop** (Esc) puts everything back.
+
+- *Place Actors > Physics Cube / Physics Sphere* adds a ready-made falling object 3 m above the view focus.
+- Anything can take part: select it and use *+ Add Component > Rigid Body* (a **Collider** fitted to its mesh is added too). A Collider alone makes a solid obstacle that never moves, such as a floor or wall.
+- In Details: body **Type** (Dynamic falls and is pushed; Kinematic follows its transform and pushes others; Static never moves), **Mass**, **Friction**, **Bounciness**, and the collider's **Shape** and size. The selected actor's collider is drawn as a green wireframe.
+- `levels\physics_playground.alevel` has a wall of bricks hit by a heavy ball, balls on a ramp and a pyramid of crates. Play it in the editor, or run `aether_spinning_cubes.exe --level levels\physics_playground.alevel`.
 
 Select a mesh to edit its material: **Metallic** (0 = plastic, wood, stone; 1 = metal), **Roughness** (0 = mirror-like, 1 = matte) and **Emissive** (glow).
 
