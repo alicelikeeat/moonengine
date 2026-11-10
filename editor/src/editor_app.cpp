@@ -26,6 +26,7 @@
 #include "aether/world/schedule.hpp"
 #include "aether/world/serialization.hpp"
 #include "aether/gameplay/spin.hpp"
+#include "aether/render/light.hpp"
 #include "aether/render/mesh_registry.hpp"
 #include "aether/render/model_library.hpp"
 
@@ -48,9 +49,10 @@ constexpr const char* kPlace = "Place Actors";
 constexpr const char* kLog = "Output Log";
 constexpr const char* kStats = "Stats";
 constexpr const char* kContent = "Content Browser";
+constexpr const char* kWorldSettings = "World Settings";
 constexpr const char* kAssetDrag = "AETHER_ASSET";
 constexpr const char* kOutlinerDrag = "AETHER_ENTITY";
-constexpr const char* kGenerator = "Aether Editor 0.4.0";
+constexpr const char* kGenerator = "Aether Editor 0.5.0";
 
 namespace fs = std::filesystem;
 
@@ -140,13 +142,14 @@ struct EditorApp::Impl {
     bool show_grid = true;
 
     bool show_outliner = true, show_details = true, show_place = true, show_log = true, show_stats = true;
-    bool show_content = true;
+    bool show_content = true, show_world = true;
+    render::Environment environment;  // World Settings (editor session only for now)
 
     // Content browser.
     std::vector<std::string> content_models;
     bool content_scanned = false;
     std::string content_selected;
-    int focus_content = 0;  // frames until the tab is brought to the front (after a layout reset)
+    int focus_content = 0;  // frames until the default tabs are brought to the front (after a layout reset)
     ImGuiTextFilter content_filter;
     bool show_demo = false, show_about = false, show_controls = false;
     bool reset_layout = false;
@@ -493,6 +496,37 @@ struct EditorApp::Impl {
         return e;
     }
 
+    const char* actor_type(world::Entity e) const {
+        if (const auto* light = world->get<render::Light>(e))
+            return light->type == render::LightType::Directional ? "Directional Light" : "Point Light";
+        return world->has<render::MeshInstance>(e) ? "Static Mesh" : "Empty";
+    }
+
+    static render::Light default_light(render::LightType type) {
+        render::Light light;
+        light.type = type;
+        if (type == render::LightType::Directional) {
+            light.color = {1.0f, 0.96f, 0.9f};
+            light.intensity = 3.0f;
+        }
+        return light;
+    }
+
+    void spawn_light(render::LightType type) {
+        if (!can_record()) return;
+        const bool sun = type == render::LightType::Directional;
+        const world::Entity e = world->create();
+        world->add<world::Name>(e, world::Name{sun ? "Directional Light" : "Point Light"});
+        world::Transform t{cam.focus + Vec3{0, sun ? 4.0f : 1.5f, 0}};
+        if (sun) t.rotation = render::rotation_toward({-0.4f, -1.0f, -0.3f});
+        world->add<world::Transform>(e, t);
+        world->add<render::Light>(e, default_light(type));
+        world::propagate_transforms(*world);
+        record(make_create_command(std::string("Create ") + (sun ? "Directional Light" : "Point Light"),
+                                   capture_subtree(*world, e)));
+        select(e);
+    }
+
     // Instantiates a content model with its node hierarchy as one undo step.
     void spawn_model(const std::string& path, Vec3 position) {
         if (!can_record()) {
@@ -653,6 +687,7 @@ struct EditorApp::Impl {
         }
         viewport_panel();
         if (show_outliner) outliner_panel();
+        if (show_world) world_settings_panel();
         if (show_details) details_panel();
         if (show_place) place_panel();
         if (show_content) content_panel();
@@ -675,6 +710,7 @@ struct EditorApp::Impl {
         const ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.26f, nullptr, &center);
         ImGui::DockBuilderDockWindow(kViewport, center);
         ImGui::DockBuilderDockWindow(kOutliner, right_top);
+        ImGui::DockBuilderDockWindow(kWorldSettings, right_bottom);
         ImGui::DockBuilderDockWindow(kDetails, right_bottom);
         ImGui::DockBuilderDockWindow(kPlace, left);
         ImGui::DockBuilderDockWindow(kContent, bottom);
@@ -721,13 +757,14 @@ struct EditorApp::Impl {
         if (ImGui::BeginMenu("Window")) {
             ImGui::MenuItem(kOutliner, nullptr, &show_outliner);
             ImGui::MenuItem(kDetails, nullptr, &show_details);
+            ImGui::MenuItem(kWorldSettings, nullptr, &show_world);
             ImGui::MenuItem(kPlace, nullptr, &show_place);
             ImGui::MenuItem(kContent, nullptr, &show_content);
             ImGui::MenuItem(kLog, nullptr, &show_log);
             ImGui::MenuItem(kStats, nullptr, &show_stats);
             ImGui::Separator();
             if (ImGui::MenuItem("Reset Layout")) {
-                show_outliner = show_details = show_place = show_log = show_stats = show_content = true;
+                show_outliner = show_details = show_place = show_log = show_stats = show_content = show_world = true;
                 reset_layout = true;
             }
             ImGui::MenuItem("ImGui Demo (developer)", nullptr, &show_demo);
@@ -925,6 +962,33 @@ struct EditorApp::Impl {
 
         camera_input(hovered, size);
 
+        // Light icons: lights have no mesh, so they are drawn and picked in
+        // screen space.
+        struct Icon {
+            world::Entity entity;
+            ImVec2 pos;
+            ImVec2 arrow_end;  // directional lights: where the light goes
+            const render::Light* light;
+        };
+        std::vector<Icon> icons;
+        const Mat4 view_proj = render::view_projection(rc, aspect);
+        const auto to_screen = [&](Vec3 p, ImVec2& out) {
+            const Vec3 ndc = render::project_to_ndc(view_proj, p);
+            const Vec3 eye = view.transform_point(p);
+            if (eye.z > -rc.near_plane) return false;  // behind the camera
+            out = {vp_min.x + (ndc.x * 0.5f + 0.5f) * size.x, vp_min.y + (ndc.y * 0.5f + 0.5f) * size.y};
+            return true;
+        };
+        world->each<const world::GlobalTransform, const render::Light>(
+            [&](world::Entity e, const world::GlobalTransform& g, const render::Light& light) {
+                const Vec3 pos = g.matrix.translation();
+                Icon icon{e, {}, {}, &light};
+                if (!to_screen(pos, icon.pos)) return;
+                const Vec3 dir = math::normalize(Vec3{-g.matrix.m[8], -g.matrix.m[9], -g.matrix.m[10]});
+                if (!to_screen(pos + dir * 1.5f, icon.arrow_end)) icon.arrow_end = icon.pos;
+                icons.push_back(icon);
+            });
+
         // Click to select (not when the click was a camera drag or on the gizmo).
         ImGuiIO& io = ImGui::GetIO();
         if (hovered && !gizmo_hot && !io.KeyAlt && ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
@@ -932,12 +996,45 @@ struct EditorApp::Impl {
                     ImGui::GetMouseDragDelta(ImGuiMouseButton_Left).y * ImGui::GetMouseDragDelta(ImGuiMouseButton_Left).y < 16.0f) {
             const float nx = 2.0f * (io.MousePos.x - vp_min.x) / size.x - 1.0f;
             const float ny = 2.0f * (io.MousePos.y - vp_min.y) / size.y - 1.0f;
-            const Mat4 vp = render::view_projection(rc, aspect);
-            select(pick(*world, screen_ray(vp, nx, ny), library->bounds()).entity);
+            world::Entity hit;
+            float best = 14.0f * 14.0f;  // icon radius in pixels, squared
+            for (const Icon& icon : icons) {
+                const float dx = io.MousePos.x - icon.pos.x, dy = io.MousePos.y - icon.pos.y;
+                if (dx * dx + dy * dy < best) {
+                    best = dx * dx + dy * dy;
+                    hit = icon.entity;
+                }
+            }
+            if (hit.is_null()) hit = pick(*world, screen_ray(view_proj, nx, ny), library->bounds()).entity;
+            select(hit);
         }
 
         // Overlay: view label, selection, frame rate.
         ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->PushClipRect(vp_min, {vp_min.x + size.x, vp_min.y + size.y}, true);
+        for (const Icon& icon : icons) {
+            const bool chosen = icon.entity == selection();
+            const Vec3 c = icon.light->color;
+            const ImU32 tint = IM_COL32(static_cast<int>(std::min(1.0f, c.x) * 255), static_cast<int>(std::min(1.0f, c.y) * 255),
+                                        static_cast<int>(std::min(1.0f, c.z) * 255), 255);
+            const ImU32 outline = chosen ? IM_COL32(255, 150, 40, 255) : IM_COL32(20, 20, 24, 220);
+            if (icon.light->type == render::LightType::Directional) {
+                if (chosen) dl->AddLine(icon.pos, icon.arrow_end, IM_COL32(255, 210, 90, 255), 2.0f);
+                for (int k = 0; k < 8; ++k) {  // sun rays
+                    const float a = static_cast<float>(k) * math::kPi / 4.0f;
+                    const ImVec2 d{std::cos(a), std::sin(a)};
+                    dl->AddLine({icon.pos.x + d.x * 8, icon.pos.y + d.y * 8}, {icon.pos.x + d.x * 12, icon.pos.y + d.y * 12},
+                                tint, 2.0f);
+                }
+                dl->AddCircleFilled(icon.pos, 6.5f, tint);
+                dl->AddCircle(icon.pos, 7.0f, outline, 0, chosen ? 2.0f : 1.0f);
+            } else {
+                dl->AddCircleFilled(icon.pos, 9.0f, IM_COL32(20, 20, 24, 170));
+                dl->AddCircleFilled(icon.pos, 6.0f, tint);
+                dl->AddCircle(icon.pos, 9.5f, outline, 0, chosen ? 2.0f : 1.0f);
+            }
+        }
+        dl->PopClipRect();
         const ImVec2 p{vp_min.x + 10, vp_min.y + 8};
         dl->AddText(p, IM_COL32(220, 220, 225, 230), "Perspective   Lit");
         char fps[64];
@@ -1022,7 +1119,7 @@ struct EditorApp::Impl {
             ImGui::EndPopup();
         }
         ImGui::TableNextColumn();
-        ImGui::TextDisabled("%s", world->has<render::MeshInstance>(e) ? "Static Mesh" : "Empty");
+        ImGui::TextDisabled("%s", actor_type(e));
         if (open && !kids.empty()) {
             const std::vector<world::Entity> copy(kids.begin(), kids.end());  // edits may reallocate
             for (const world::Entity c : copy)
@@ -1093,7 +1190,7 @@ struct EditorApp::Impl {
                         select(e);
                     ImGui::PopID();
                     ImGui::TableNextColumn();
-                    ImGui::TextDisabled("%s", world->has<render::MeshInstance>(e) ? "Static Mesh" : "Empty");
+                    ImGui::TextDisabled("%s", actor_type(e));
                 }
             } else {
                 for (const world::Entity r : roots)
@@ -1243,17 +1340,93 @@ struct EditorApp::Impl {
                     ImGui::SameLine(80);
                     ImGui::TextDisabled("%s", asset_label(library->names().texture_name_of(m.texture)).c_str());
                 }
+                const auto texture_row = [&](const char* label, render::TextureId t) {
+                    if (t == render::kWhiteTexture) return;
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::Text("%s", label);
+                    ImGui::SameLine(80);
+                    ImGui::TextDisabled("%s", asset_label(library->names().texture_name_of(t)).c_str());
+                };
+                texture_row("Normal", m.normal_texture);
+                texture_row("Metal/Rgh", m.metallic_roughness_texture);
                 ImGui::AlignTextToFramePadding();
                 ImGui::Text("Color");
                 ImGui::SameLine(80);
                 ImGui::SetNextItemWidth(-1);
                 if (ImGui::ColorEdit3("##color", &m.color.x)) world->add<render::MeshInstance>(e, m);
                 track_edit(e, "Change color");
+                ImGui::AlignTextToFramePadding();
+                ImGui::Text("Metallic");
+                ImGui::SameLine(80);
+                ImGui::SetNextItemWidth(-1);
+                if (ImGui::SliderFloat("##metallic", &m.metallic, 0.0f, 1.0f, "%.2f")) world->add<render::MeshInstance>(e, m);
+                track_edit(e, "Change metallic");
+                ImGui::AlignTextToFramePadding();
+                ImGui::Text("Roughness");
+                ImGui::SameLine(80);
+                ImGui::SetNextItemWidth(-1);
+                if (ImGui::SliderFloat("##roughness", &m.roughness, 0.0f, 1.0f, "%.2f")) world->add<render::MeshInstance>(e, m);
+                track_edit(e, "Change roughness");
+                ImGui::AlignTextToFramePadding();
+                ImGui::Text("Emissive");
+                ImGui::SameLine(80);
+                ImGui::SetNextItemWidth(-1);
+                if (ImGui::ColorEdit3("##emissive", &m.emissive.x, ImGuiColorEditFlags_HDR | ImGuiColorEditFlags_Float))
+                    world->add<render::MeshInstance>(e, m);
+                track_edit(e, "Change emissive");
             }
             if (remove) {
                 const EntityState before = capture(*world, e);
                 world->remove<render::MeshInstance>(e);
                 record(make_edit_command("Remove Static Mesh", before, capture(*world, e)));
+            }
+        }
+
+        // Light
+        if (world->has<render::Light>(e)) {
+            bool remove = false;
+            if (component_header("Light", true, remove) && !remove) {
+                render::Light l = *world->get<render::Light>(e);
+                const auto row = [](const char* label) {
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::Text("%s", label);
+                    ImGui::SameLine(80);
+                    ImGui::SetNextItemWidth(-1);
+                };
+                row("Type");
+                int type = l.type == render::LightType::Directional ? 0 : 1;
+                if (ImGui::Combo("##type", &type, "Directional\0Point\0")) {
+                    const EntityState before = capture(*world, e);
+                    const render::Light fresh = default_light(type == 0 ? render::LightType::Directional : render::LightType::Point);
+                    l.type = fresh.type;
+                    l.intensity = fresh.intensity;
+                    world->add<render::Light>(e, l);
+                    record(make_edit_command("Change light type", before, capture(*world, e)));
+                }
+                row("Color");
+                if (ImGui::ColorEdit3("##lcolor", &l.color.x)) world->add<render::Light>(e, l);
+                track_edit(e, "Change light color");
+                row("Intensity");
+                if (ImGui::DragFloat("##intensity", &l.intensity, 0.05f, 0.0f, 1000.0f, "%.2f")) world->add<render::Light>(e, l);
+                track_edit(e, "Change light intensity");
+                if (l.type == render::LightType::Point) {
+                    row("Range");
+                    if (ImGui::DragFloat("##range", &l.range, 0.1f, 0.1f, 1000.0f, "%.1f m")) world->add<render::Light>(e, l);
+                    track_edit(e, "Change light range");
+                } else {
+                    row("Shadows");
+                    if (ImGui::Checkbox("##shadows", &l.cast_shadows)) {
+                        const EntityState before = capture(*world, e);
+                        world->add<render::Light>(e, l);
+                        record(make_edit_command("Toggle shadows", before, capture(*world, e)));
+                    }
+                    ImGui::TextDisabled("Rotate to aim. The first directional light casts shadows.");
+                }
+            }
+            if (remove) {
+                const EntityState before = capture(*world, e);
+                world->remove<render::Light>(e);
+                record(make_edit_command("Remove Light", before, capture(*world, e)));
             }
         }
 
@@ -1297,6 +1470,7 @@ struct EditorApp::Impl {
         for (const world::ComponentId id : world->components_of(e)) {
             const auto& info = world->component_info(id);
             if (info.name == "Name" || info.name == "Transform" || info.name == "MeshInstance" || info.name == "Spin" ||
+                info.name == "Light" ||
                 info.name == "GlobalTransform")
                 continue;
             others.push_back(info.name);
@@ -1315,6 +1489,13 @@ struct EditorApp::Impl {
                 world->add<render::MeshInstance>(e, render::MeshInstance{cube, {0.75f, 0.75f, 0.78f}});
                 record(make_edit_command("Add Static Mesh", before, capture(*world, e)));
             }
+            for (const auto type : {render::LightType::Point, render::LightType::Directional}) {
+                const char* label = type == render::LightType::Point ? "Point Light" : "Directional Light";
+                if (ImGui::MenuItem(label, nullptr, false, !world->has<render::Light>(e))) {
+                    world->add<render::Light>(e, default_light(type));
+                    record(make_edit_command(std::string("Add ") + label, before, capture(*world, e)));
+                }
+            }
             if (ImGui::MenuItem("Spin", nullptr, false, !world->has<Spin>(e))) {
                 world->add<Spin>(e, Spin{});
                 record(make_edit_command("Add Spin", before, capture(*world, e)));
@@ -1325,6 +1506,39 @@ struct EditorApp::Impl {
             }
             ImGui::EndPopup();
         }
+        ImGui::End();
+    }
+
+    void world_settings_panel() {
+        if (!ImGui::Begin(kWorldSettings, &show_world)) {
+            ImGui::End();
+            return;
+        }
+        render::Environment& env = environment;
+        const auto row = [](const char* label) {
+            ImGui::AlignTextToFramePadding();
+            ImGui::Text("%s", label);
+            ImGui::SameLine(110);
+            ImGui::SetNextItemWidth(-1);
+        };
+        ImGui::SeparatorText("Sky Light");
+        row("Sky");
+        ImGui::ColorEdit3("##sky", &env.sky_color.x);
+        row("Ground");
+        ImGui::ColorEdit3("##ground", &env.ground_color.x);
+        row("Intensity");
+        ImGui::SliderFloat("##ambient", &env.ambient_intensity, 0.0f, 4.0f, "%.2f");
+        ImGui::SeparatorText("Camera");
+        row("Exposure");
+        ImGui::SliderFloat("##exposure", &env.exposure, 0.1f, 8.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+        ImGui::SeparatorText("Shadows");
+        row("Sun shadows");
+        ImGui::Checkbox("##shadows", &env.shadows);
+        ImGui::Spacing();
+        if (ImGui::Button("Reset to defaults")) env = render::Environment{};
+        ImGui::TextDisabled("Applies to this editor session; not saved in the level yet.");
+        if (world->count<render::Light>() == 0)
+            ImGui::TextWrapped("This level has no lights, so a default sun is used. Add one from Place Actors > Lights.");
         ImGui::End();
     }
 
@@ -1342,6 +1556,13 @@ struct EditorApp::Impl {
         if (ImGui::Button("Spinning Cube", ImVec2(w, 0))) spawn("Spinning Cube", true, true, {0.35f, 0.65f, 1.0f});
         if (ImGui::Button("Empty Actor", ImVec2(w, 0))) spawn("Empty", false, false);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("Transform only; use as a group or pivot");
+        ImGui::Spacing();
+        ImGui::TextDisabled("Lights");
+        if (ImGui::Button("Directional Light", ImVec2(w, 0))) spawn_light(render::LightType::Directional);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            ImGui::SetTooltip("Sunlight: parallel rays along the light's forward axis; casts shadows");
+        if (ImGui::Button("Point Light", ImVec2(w, 0))) spawn_light(render::LightType::Point);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("Light bulb: shines in all directions up to its range");
         ImGui::Spacing();
         ImGui::TextDisabled("Levels");
         if (ImGui::Button("Open Demo Level", ImVec2(w, 0))) request(Pending::Demo);
@@ -1366,6 +1587,9 @@ struct EditorApp::Impl {
         if (const ImGuiWindow* log_window = ImGui::FindWindowByName(kLog); log_window && log_window->DockId)
             ImGui::SetNextWindowDockID(log_window->DockId, ImGuiCond_FirstUseEver);
         // Select the tab once the reset layout's windows exist.
+        // Only the focused window's tab is brought forward, so one per frame:
+        // Details (shares a dock with World Settings), then this panel.
+        if (focus_content == 2) ImGui::SetWindowFocus(kDetails);
         if (focus_content > 0 && --focus_content == 0) ImGui::SetWindowFocus(kContent);
         if (!ImGui::Begin(kContent, &show_content)) {
             ImGui::End();
@@ -1491,7 +1715,9 @@ struct EditorApp::Impl {
             row("GPU", renderer.gpu().name + (renderer.gpu().software ? " (software)" : ""));
             row("API", renderer.gpu().api + (renderer.gpu().validation ? ", validation" : ""));
             row("Viewport", std::to_string(renderer.viewport_width()) + " x " + std::to_string(renderer.viewport_height()));
-            row("Draw calls", std::to_string(last_stats.draws));
+            row("Draw calls", std::to_string(last_stats.draws) + " (+" + std::to_string(last_stats.shadow_draws) + " shadow)");
+            row("Point lights", std::to_string(last_stats.point_lights));
+            row("Sun shadows", last_stats.sun_shadows ? "on" : "off");
             row("Entities", std::to_string(world->entity_count()));
             row("Archetypes", std::to_string(world->archetype_count()));
             row("Component types", std::to_string(world->component_type_count()));
@@ -1528,6 +1754,7 @@ render::RenderOptions EditorApp::render_options() const {
     render::RenderOptions o;
     o.highlight = impl_->selection();
     o.grid = impl_->show_grid;
+    o.environment = impl_->environment;
     return o;
 }
 

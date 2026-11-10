@@ -43,6 +43,8 @@ MeshData to_mesh_data(const assets::Primitive& prim) {
             v.uv[0] = prim.uvs[i][0];
             v.uv[1] = prim.uvs[i][1];
         }
+        if (i < prim.tangents.size())
+            for (int k = 0; k < 4; ++k) v.tangent[k] = prim.tangents[i][static_cast<std::size_t>(k)];
     }
     out.indices = prim.indices;
     return out;
@@ -151,17 +153,34 @@ Result<LoadedModel> ModelLibrary::import(const std::string& path) {
     out.warnings = src.warnings;
     const std::string prefix = std::string(kAssetPrefix) + path + "#";
 
-    std::vector<TextureId> textures(src.textures.size(), kWhiteTexture);
+    // Each texture is uploaded in the colour space its materials need:
+    // sRGB for base colour, linear for normal and metallic-roughness data.
+    std::vector<bool> as_color(src.textures.size(), false), as_data(src.textures.size(), false);
+    const auto mark = [&](std::vector<bool>& v, int t) {
+        if (t >= 0 && static_cast<std::size_t>(t) < v.size()) v[static_cast<std::size_t>(t)] = true;
+    };
+    for (const auto& mat : src.materials) {
+        mark(as_color, mat.base_color_texture);
+        mark(as_data, mat.normal_texture);
+        mark(as_data, mat.metallic_roughness_texture);
+    }
+    std::vector<TextureId> color_textures(src.textures.size(), kWhiteTexture), data_textures = color_textures;
     for (std::size_t t = 0; t < src.textures.size(); ++t) {
         const auto& img = src.textures[t];
-        auto id = renderer_.upload_texture(TextureData{img.width, img.height, img.rgba, true});
-        if (!id) {
-            out.warnings.push_back(std::format("texture {} not uploaded: {}", t, id.error().message));
-            continue;
+        for (const bool srgb : {true, false}) {
+            if (srgb ? !as_color[t] : !as_data[t]) continue;
+            auto id = renderer_.upload_texture(TextureData{img.width, img.height, img.rgba, srgb});
+            if (!id) {
+                out.warnings.push_back(std::format("texture {} not uploaded: {}", t, id.error().message));
+                continue;
+            }
+            (srgb ? color_textures : data_textures)[t] = id.value();
+            names_.add_texture(prefix + "texture" + std::to_string(t) + (srgb ? "" : ".linear"), id.value());
         }
-        textures[t] = id.value();
-        names_.add_texture(prefix + "texture" + std::to_string(t), id.value());
     }
+    const auto texture = [](const std::vector<TextureId>& ids, int t) {
+        return t >= 0 && static_cast<std::size_t>(t) < ids.size() ? ids[static_cast<std::size_t>(t)] : kWhiteTexture;
+    };
 
     // Upload every primitive once; nodes share meshes.
     std::vector<std::vector<ModelPart>> mesh_parts(src.meshes.size());
@@ -178,11 +197,21 @@ Result<LoadedModel> ModelLibrary::import(const std::string& path) {
             names_.add(prefix + "mesh" + std::to_string(m) + "." + std::to_string(p), id.value());
             ModelPart part;
             part.mesh = id.value();
+            part.material.mesh = id.value();
+            // glTF's default material: white, fully rough, non-metallic.
+            part.material.color = {1, 1, 1};
+            part.material.metallic = 0.0f;
+            part.material.roughness = 1.0f;
             if (prim.material >= 0 && static_cast<std::size_t>(prim.material) < src.materials.size()) {
                 const auto& mat = src.materials[static_cast<std::size_t>(prim.material)];
-                part.color = {mat.base_color[0], mat.base_color[1], mat.base_color[2]};
-                if (mat.base_color_texture >= 0 && static_cast<std::size_t>(mat.base_color_texture) < textures.size())
-                    part.texture = textures[static_cast<std::size_t>(mat.base_color_texture)];
+                MeshInstance& out_mat = part.material;
+                out_mat.color = {mat.base_color[0], mat.base_color[1], mat.base_color[2]};
+                out_mat.metallic = mat.metallic;
+                out_mat.roughness = mat.roughness;
+                out_mat.emissive = mat.emissive;
+                out_mat.texture = texture(color_textures, mat.base_color_texture);
+                out_mat.normal_texture = texture(data_textures, mat.normal_texture);
+                out_mat.metallic_roughness_texture = texture(data_textures, mat.metallic_roughness_texture);
             }
             mesh_parts[m].push_back(part);
             part_bounds[m].push_back(box);
@@ -282,14 +311,12 @@ Result<world::Entity> ModelLibrary::spawn(world::World& w, std::string_view asse
         auto e = add_child(item.parent, node.name, world::Transform{node.translation, node.rotation, node.scale});
         if (!e) return e.error();
         if (node.parts.size() == 1) {
-            const ModelPart& part = node.parts.front();
-            w.add<MeshInstance>(e.value(), MeshInstance{part.mesh, part.color, part.texture});
+            w.add<MeshInstance>(e.value(), node.parts.front().material);
         } else {
             for (std::size_t p = 0; p < node.parts.size(); ++p) {
                 auto child = add_child(e.value(), node.name + " [" + std::to_string(p) + "]", world::Transform{});
                 if (!child) return child.error();
-                const ModelPart& part = node.parts[p];
-                w.add<MeshInstance>(child.value(), MeshInstance{part.mesh, part.color, part.texture});
+                w.add<MeshInstance>(child.value(), node.parts[p].material);
             }
         }
         for (auto c = node.children.rbegin(); c != node.children.rend(); ++c) stack.push_back({*c, e.value()});

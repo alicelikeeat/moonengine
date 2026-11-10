@@ -1,6 +1,7 @@
 aether_add_module(render
     SOURCES
         src/camera.cpp
+        src/light.cpp
         src/mesh.cpp
         src/mesh_registry.cpp
         src/model_library.cpp

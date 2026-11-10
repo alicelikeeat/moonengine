@@ -47,11 +47,16 @@ private:
     Resolver resolver_;
 };
 
-// MeshInstance in level files:
-//   {"mesh": "<name>", "color": [r, g, b], "texture": "<name>"}
-// "texture" is written only when it is not the white default. `meshes` must
-// outlive the registry. An unknown mesh or texture name fails that
-// component's load (the loader keeps the data and warns).
+// Level-file support for render components. `meshes` must outlive the
+// registry.
+//   MeshInstance: {"mesh": "<name>", "color": [r, g, b], "texture": "<name>",
+//                  "metallic": m, "roughness": r, "emissive": [r, g, b],
+//                  "normal_texture": "<name>", "metallic_roughness_texture": "<name>"}
+//     Fields other than mesh and color are written only when they differ
+//     from the defaults. An unknown mesh or texture name fails that
+//     component's load (the loader keeps the data and warns).
+//   Light: {"type": "directional" | "point", "color": [r, g, b],
+//           "intensity": i, "range": r (point), "shadows": bool (directional)}
 void register_components(world::SerializerRegistry& registry, const MeshRegistry& meshes);
 
 }  // namespace aether::render

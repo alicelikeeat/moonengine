@@ -1,16 +1,11 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 // Anti-aliased analytic grid: 1 m minor lines, 10 m major lines, red X axis
 // and blue Z axis, fading out with distance from the camera.
 
 layout(location = 0) in vec3 v_world;
 
-layout(push_constant) uniform Push {
-    mat4 view_proj;
-    vec4 camera_position;
-    vec4 unused1;
-    vec4 unused2;
-    vec4 unused3;
-} pc;
+#include "common.glsl"
 
 layout(location = 0) out vec4 out_color;
 
@@ -37,8 +32,8 @@ void main() {
     if (z_axis > 0.0) { color = mix(color, vec3(0.20, 0.38, 0.90), z_axis); alpha = max(alpha, z_axis); }
 
     // Fade with distance; farther when the camera is higher above the ground.
-    float dist = length(v_world - pc.camera_position.xyz);
-    float reach = max(40.0, abs(pc.camera_position.y) * 12.0);
+    float dist = length(v_world - frame.camera_position.xyz);
+    float reach = max(40.0, abs(frame.camera_position.y) * 12.0);
     alpha *= 1.0 - smoothstep(reach * 0.35, reach, dist);
     if (alpha <= 0.002) discard;
     out_color = vec4(color, alpha);

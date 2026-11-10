@@ -52,6 +52,15 @@ bool read_float_array(const Json& obj, std::string_view key, float* out, std::si
     return true;
 }
 
+// Optional finite number; false only when present and not a finite number.
+bool read_float(const Json& obj, std::string_view key, float& out) {
+    const Json* v = obj.find(key);
+    if (!v) return true;
+    if (!v->is_number() || !std::isfinite(v->as_number())) return false;
+    out = static_cast<float>(v->as_number());
+    return true;
+}
+
 // ---- URIs ----------------------------------------------------------------------
 
 std::optional<std::string> percent_decode(std::string_view s) {
@@ -322,17 +331,39 @@ private:
             const Json& m = (*materials)[i];
             Material mat;
             mat.name = string_field(m, "name");
+            const std::string where = "material " + std::to_string(i);
+            // Texture reference {"index": n, "texCoord": 0}; -1 when absent or broken.
+            const auto texture_ref = [&](const Json& owner, std::string_view key) {
+                const Json* t = owner.find(key);
+                if (!t || !t->is_object()) return -1;
+                const auto ti = index_field(*t, "index", static_cast<std::size_t>(-1));
+                if (index_field(*t, "texCoord", 0).value_or(0) != 0)
+                    model_.warnings.push_back(where + " uses TEXCOORD_1; using TEXCOORD_0");
+                if (ti && *ti < model_.textures.size()) return static_cast<int>(*ti);
+                model_.warnings.push_back(where + " references a missing texture");
+                return -1;
+            };
+            float factor[3] = {0, 0, 0};
             if (const Json* pbr = m.find("pbrMetallicRoughness"); pbr && pbr->is_object()) {
                 if (!read_float_array(*pbr, "baseColorFactor", mat.base_color.data(), 4))
-                    return invalid("material " + std::to_string(i) + " has an invalid baseColorFactor");
-                if (const Json* t = pbr->find("baseColorTexture"); t && t->is_object()) {
-                    const auto ti = index_field(*t, "index", static_cast<std::size_t>(-1));
-                    if (ti && *ti < model_.textures.size()) mat.base_color_texture = static_cast<int>(*ti);
-                    else model_.warnings.push_back("material " + std::to_string(i) + " references a missing texture");
-                    if (index_field(*t, "texCoord", 0).value_or(0) != 0)
-                        model_.warnings.push_back("material " + std::to_string(i) + " uses TEXCOORD_1; using TEXCOORD_0");
-                }
+                    return invalid(where + " has an invalid baseColorFactor");
+                factor[0] = mat.metallic;
+                factor[1] = mat.roughness;
+                if (!read_float(*pbr, "metallicFactor", factor[0]) || !read_float(*pbr, "roughnessFactor", factor[1]))
+                    return invalid(where + " has an invalid metallic or roughness factor");
+                mat.metallic = std::clamp(factor[0], 0.0f, 1.0f);
+                mat.roughness = std::clamp(factor[1], 0.0f, 1.0f);
+                mat.base_color_texture = texture_ref(*pbr, "baseColorTexture");
+                mat.metallic_roughness_texture = texture_ref(*pbr, "metallicRoughnessTexture");
             }
+            mat.normal_texture = texture_ref(m, "normalTexture");
+            if (const Json* nt = m.find("normalTexture"); nt && nt->is_object())
+                if (!read_float(*nt, "scale", mat.normal_scale)) return invalid(where + " has an invalid normal scale");
+            factor[0] = factor[1] = factor[2] = 0;
+            if (!read_float_array(m, "emissiveFactor", factor, 3)) return invalid(where + " has an invalid emissiveFactor");
+            mat.emissive = {std::max(0.0f, factor[0]), std::max(0.0f, factor[1]), std::max(0.0f, factor[2])};
+            if (m.find("occlusionTexture")) model_.warnings.push_back(where + ": occlusion texture not supported yet; ignored");
+            if (m.find("emissiveTexture")) model_.warnings.push_back(where + ": emissive texture not supported yet; using the factor");
             model_.materials.push_back(std::move(mat));
         }
         return ok();
@@ -414,7 +445,25 @@ private:
                     for (std::size_t i = 0; i < n; ++i) prim.indices[i] = static_cast<std::uint32_t>(i);
                 }
                 if (prim.indices.size() % 3 != 0) return invalid(where + " index count is not a multiple of 3");
-                if (prim.normals.empty()) compute_normals(prim);
+                const bool had_normals = !prim.normals.empty();
+                if (!had_normals) compute_normals(prim);
+                // Supplied tangents only make sense with supplied normals (spec).
+                if (const auto ti = index_field(*attrs, "TANGENT", static_cast<std::size_t>(-1));
+                    had_normals && ti && *ti != static_cast<std::size_t>(-1)) {
+                    auto acc = accessor(*ti, 4);
+                    if (!acc) return acc.error();
+                    if (acc.value().count != n) return invalid(where + " TANGENT count differs from POSITION");
+                    auto f = read_floats(acc.value());
+                    if (!f) return f.error();
+                    prim.tangents.resize(n);
+                    for (std::size_t i = 0; i < n; ++i) {
+                        const math::Vec3 t{f.value()[i * 4], f.value()[i * 4 + 1], f.value()[i * 4 + 2]};
+                        const math::Vec3 u = math::length(t) > 0 ? math::normalize(t) : math::Vec3{1, 0, 0};
+                        prim.tangents[i] = {u.x, u.y, u.z, f.value()[i * 4 + 3] < 0 ? -1.0f : 1.0f};
+                    }
+                } else {
+                    generate_tangents(prim);
+                }
 
                 const auto mat = index_field(p, "material", static_cast<std::size_t>(-1));
                 if (mat && *mat != static_cast<std::size_t>(-1)) {
@@ -524,6 +573,43 @@ std::uint32_t read_u32(const std::uint8_t* p) {
 }
 
 }  // namespace
+
+void generate_tangents(Primitive& prim) {
+    const std::size_t n = prim.positions.size();
+    std::vector<math::Vec3> tan(n, math::Vec3{0, 0, 0}), bit(n, math::Vec3{0, 0, 0});
+    for (std::size_t i = 0; i + 2 < prim.indices.size(); i += 3) {
+        const std::uint32_t a = prim.indices[i], b = prim.indices[i + 1], c = prim.indices[i + 2];
+        if (a >= n || b >= n || c >= n || a >= prim.uvs.size() || b >= prim.uvs.size() || c >= prim.uvs.size()) continue;
+        const math::Vec3 e1 = prim.positions[b] - prim.positions[a];
+        const math::Vec3 e2 = prim.positions[c] - prim.positions[a];
+        const float s1 = prim.uvs[b][0] - prim.uvs[a][0], t1 = prim.uvs[b][1] - prim.uvs[a][1];
+        const float s2 = prim.uvs[c][0] - prim.uvs[a][0], t2 = prim.uvs[c][1] - prim.uvs[a][1];
+        const float det = s1 * t2 - s2 * t1;
+        if (std::abs(det) < 1e-12f || !std::isfinite(det)) continue;
+        const float r = 1.0f / det;
+        const math::Vec3 t = (e1 * t2 - e2 * t1) * r;  // dP/du
+        const math::Vec3 v = (e2 * s1 - e1 * s2) * r;  // dP/dv (v grows down the image)
+        for (const std::uint32_t k : {a, b, c}) {
+            tan[k] = tan[k] + t;
+            bit[k] = bit[k] + v;
+        }
+    }
+    prim.tangents.resize(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        const math::Vec3 nrm = i < prim.normals.size() ? prim.normals[i] : math::Vec3{0, 1, 0};
+        math::Vec3 t = tan[i] - nrm * math::dot(nrm, tan[i]);  // Gram-Schmidt
+        if (!(math::length(t) > 1e-8f)) {
+            // No usable UVs: any direction perpendicular to the normal.
+            const math::Vec3 axis = std::abs(nrm.x) < 0.9f ? math::Vec3{1, 0, 0} : math::Vec3{0, 1, 0};
+            t = math::cross(math::cross(nrm, axis), nrm);
+            if (!(math::length(t) > 1e-8f)) t = {1, 0, 0};
+        }
+        t = math::normalize(t);
+        // The bitangent must point toward decreasing v (image up).
+        const float w = math::dot(math::cross(nrm, t), bit[i] * -1.0f) < 0 ? -1.0f : 1.0f;
+        prim.tangents[i] = {t.x, t.y, t.z, w};
+    }
+}
 
 Result<std::vector<std::uint8_t>> decode_base64(std::string_view text) {
     std::vector<std::uint8_t> out;

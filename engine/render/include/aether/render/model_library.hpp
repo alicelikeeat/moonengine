@@ -5,7 +5,9 @@
 // registers stable names for them in names():
 //
 //   asset:models/crate.glb#mesh<m>.<p>    primitive p of glTF mesh m
-//   asset:models/crate.glb#texture<t>     glTF texture t
+//   asset:models/crate.glb#texture<t>     glTF texture t as colour (sRGB)
+//   asset:models/crate.glb#texture<t>.linear   the same texture as data
+//                                         (normal and metallic-roughness maps)
 //
 // Level files store those names, and names() resolves them on demand, so a
 // level that uses a model loads it when the level is opened. The library
@@ -29,10 +31,10 @@
 
 namespace aether::render {
 
+// One drawable primitive with its material, ready to become a MeshInstance.
 struct ModelPart {
     MeshId mesh = 0;
-    TextureId texture = kWhiteTexture;
-    math::Vec3 color{1, 1, 1};
+    MeshInstance material;  // `mesh` is set too
 };
 
 struct ModelNode {

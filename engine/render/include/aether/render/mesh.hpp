@@ -13,8 +13,11 @@ struct Vertex {
     math::Vec3 position;
     math::Vec3 normal;
     float uv[2] = {0, 0};  // texture coordinates; (0, 0) is the image's top-left
+    // xyz: tangent (direction of increasing u); w: handedness, so that
+    // bitangent = cross(normal, tangent) * w points up the image (glTF).
+    float tangent[4] = {1, 0, 0, 1};
 };
-static_assert(sizeof(Vertex) == 32, "Vertex layout is shared with shaders");
+static_assert(sizeof(Vertex) == 48, "Vertex layout is shared with shaders");
 
 // Triangle list. Front faces wind counter-clockwise seen from outside.
 struct MeshData {
@@ -46,13 +49,23 @@ struct TextureData {
     bool srgb = true;                // colour data (base colour) is sRGB-encoded
 };
 
-// Draws `mesh` with the entity's GlobalTransform. Final colour is
-// color * texture (base colour, linear).
+// Draws `mesh` with the entity's GlobalTransform and a metallic-roughness
+// material (glTF model):
+//   base colour = color * texture
+//   metallic    = metallic * metallic_roughness_texture.b
+//   roughness   = roughness * metallic_roughness_texture.g
+//   normal      = normal_texture (tangent space); kWhiteTexture means none
+//   emitted     = emissive (linear RGB, added after lighting)
 struct MeshInstance {
     static constexpr std::string_view kComponentName = "MeshInstance";
     MeshId mesh = 0;
     math::Vec3 color{0.8f, 0.8f, 0.8f};  // linear RGB
     TextureId texture = kWhiteTexture;
+    float metallic = 0.0f;
+    float roughness = 0.5f;
+    math::Vec3 emissive{0, 0, 0};
+    TextureId normal_texture = kWhiteTexture;
+    TextureId metallic_roughness_texture = kWhiteTexture;
 };
 
 }  // namespace aether::render

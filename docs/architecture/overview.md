@@ -11,7 +11,7 @@ Dependencies only point **down** the layers. The rule is enforced at configure t
 | 0 | Foundation | `engine/foundation` | Memory, threads, jobs, logging, tracing, time, lifecycle, platform | **Implemented (core subset)** |
 | 1 | World | `engine/world` | ECS, scenes, streaming, stable IDs | **Implemented (ECS core)** |
 | 1 | Assets | `engine/assets` | Import, conversion, caching, dependency graph | **First slice: glTF 2.0 import** |
-| 2 | Render | `engine/render` | RHI, render graph, materials, lighting | **First slice: Vulkan 1.3 renderer** |
+| 2 | Render | `engine/render` | RHI, render graph, materials, lighting | **Vulkan 1.3 renderer: PBR, lights, sun shadows** |
 | 2 | Simulation | `engine/simulation` | Physics, collision, fixed step, replay | Planned (M4) |
 | 2 | Animation | `engine/animation` | Skeletons, animation graph, IK | Planned (M4) |
 | 3 | Gameplay | `engine/gameplay` | Scripting, events, game logic | **Started: Spin component and system** |

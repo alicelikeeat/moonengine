@@ -1,5 +1,6 @@
 // Renders offscreen on whatever Vulkan device is available (lavapipe in
 // CI) and checks real pixels. Skips when no Vulkan 1.3 device exists.
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -89,6 +90,32 @@ Entity spawn_cube(World& w, MeshId mesh, Vec3 position, Vec3 color) {
     return e;
 }
 
+// A directional light travelling along `direction`.
+Entity add_sun(World& w, Vec3 direction, float intensity) {
+    const Entity e = w.create();
+    w.add<Transform>(e, Transform{{0, 5, 0}, rotation_toward(direction)});
+    Light light;
+    light.type = LightType::Directional;
+    light.intensity = intensity;
+    w.add<Light>(e, light);
+    return e;
+}
+
+// No ambient light, so only the scene's lights contribute.
+RenderOptions dark() {
+    RenderOptions o;
+    o.environment.ambient_intensity = 0.0f;
+    return o;
+}
+
+// The pixel showing world point `p` in a 64x64 frame.
+Rgb at(const std::vector<std::uint8_t>& px, const Camera& cam, Vec3 p) {
+    const Vec3 ndc = project_to_ndc(view_projection(cam, 1.0f), p);
+    const auto x = static_cast<std::uint32_t>(std::clamp((ndc.x * 0.5f + 0.5f) * 64.0f, 0.0f, 63.0f));
+    const auto y = static_cast<std::uint32_t>(std::clamp((ndc.y * 0.5f + 0.5f) * 64.0f, 0.0f, 63.0f));
+    return pixel(px, 64, x, y);
+}
+
 }  // namespace
 
 AETHER_TEST(headless_clear_only) {
@@ -112,28 +139,175 @@ AETHER_TEST(headless_cube_front_face_is_lit_and_culled_correctly) {
     auto rig = make_rig();
     std::printf("    device: %s, %s%s\n", rig->renderer->gpu().name.c_str(), rig->renderer->gpu().api.c_str(),
                 rig->renderer->gpu().validation ? ", validation on" : "");
+    // Only a sun, no ambient: the +Z face facing the camera is lit when the
+    // light comes from +Z and black when it comes from behind. Seeing the
+    // back face instead (wrong winding or culling) would invert that.
     World w({.seed = 1});
     const Vec3 color{1.0f, 0.5f, 0.25f};
     spawn_cube(w, rig->cube, {0, 0, 0}, color);
+    const Entity sun = add_sun(w, {0, 0, -1}, 3.0f);
     propagate_transforms(w);
     Camera cam;
     cam.position = {0, 0, 3};
-    auto stats = rig->renderer->render(w, cam);
+    auto stats = rig->renderer->render(w, cam, dark());
     REQUIRE(stats.has_value());
     CHECK_EQ(stats.value().draws, 1u);
     auto px = rig->renderer->read_pixels();
     REQUIRE(px.has_value());
-
-    // The camera sees the +Z face. Shader: color * (0.25 + 0.75 * max(n.L, 0))
-    // with L = normalize(0.4, 0.8, 0.6). Seeing the back (-Z) face instead,
-    // i.e. wrong winding or culling, would give only the 0.25 ambient term.
-    const float lit = 0.25f + 0.75f * (0.6f / std::sqrt(0.4f * 0.4f + 0.8f * 0.8f + 0.6f * 0.6f));
-    const Rgb center = pixel(px.value(), 64, 32, 32);
-    CHECK(close(center, to_rgb8(color * lit)));
-    std::printf("    center pixel = (%d, %d, %d), expected (%d, %d, %d)\n", center.r, center.g, center.b,
-                to_rgb8(color * lit).r, to_rgb8(color * lit).g, to_rgb8(color * lit).b);
+    const Rgb lit = pixel(px.value(), 64, 32, 32);
+    std::printf("    lit centre = (%d, %d, %d)\n", lit.r, lit.g, lit.b);
+    CHECK(lit.r > 120 && lit.r > lit.g && lit.g > lit.b);  // the colour's hue survives tone mapping
     CHECK(close(pixel(px.value(), 64, 0, 0), to_rgb8(kClear)));
     CHECK(close(pixel(px.value(), 64, 63, 63), to_rgb8(kClear)));
+
+    w.get<Transform>(sun)->rotation = rotation_toward({0, 0, 1});
+    propagate_transforms(w);
+    REQUIRE(rig->renderer->render(w, cam, dark()).has_value());
+    px = rig->renderer->read_pixels();
+    REQUIRE(px.has_value());
+    const Rgb unlit = pixel(px.value(), 64, 32, 32);
+    CHECK(unlit.r <= 3 && unlit.g <= 3 && unlit.b <= 3);
+    CHECK_EQ(rig->renderer->validation_errors(), 0u);
+}
+
+AETHER_TEST(headless_default_sun_lights_worlds_without_lights) {
+    auto rig = make_rig();
+    World w({.seed = 1});
+    spawn_cube(w, rig->cube, {0, 0, 0}, {1, 1, 1});
+    propagate_transforms(w);
+    Camera cam;
+    cam.position = {0, 0, 3};
+    REQUIRE(rig->renderer->render(w, cam, dark()).has_value());
+    auto px = rig->renderer->read_pixels();
+    REQUIRE(px.has_value());
+    CHECK(pixel(px.value(), 64, 32, 32).r > 60);
+}
+
+AETHER_TEST(headless_emissive_and_metallic_materials) {
+    auto rig = make_rig();
+    World w({.seed = 1});
+    const Entity left = spawn_cube(w, rig->cube, {-1.2f, 0, 0}, {1, 1, 1});
+    const Entity right = spawn_cube(w, rig->cube, {1.2f, 0, 0}, {1, 1, 1});
+    const Entity sun = add_sun(w, {0, 0, -1}, 0.0f);  // a light exists, so no default sun
+    propagate_transforms(w);
+    Camera cam;
+    cam.position = {0, 0, 6};
+    // Emission alone: tone-mapped red, nothing else.
+    w.get<MeshInstance>(left)->emissive = {1, 0, 0};
+    REQUIRE(rig->renderer->render(w, cam, dark()).has_value());
+    auto px = rig->renderer->read_pixels();
+    REQUIRE(px.has_value());
+    const Rgb glow = pixel(px.value(), 64, 18, 32);
+    std::printf("    emissive = (%d, %d, %d)\n", glow.r, glow.g, glow.b);
+    CHECK(glow.r >= 190 && glow.r <= 215 && glow.g <= 3 && glow.b <= 3);  // ACES(1) = 0.80
+    CHECK(pixel(px.value(), 64, 46, 32).r <= 3);
+
+    // Light at 45 degrees from the side: a smooth metal reflects it away
+    // from the camera (no diffuse), a dielectric scatters it back.
+    w.get<MeshInstance>(left)->emissive = {0, 0, 0};
+    for (Entity e : {left, right}) w.get<MeshInstance>(e)->roughness = 0.2f;
+    w.get<MeshInstance>(left)->metallic = 1.0f;
+    w.get<Light>(sun)->intensity = 3.0f;
+    w.get<Transform>(sun)->rotation = rotation_toward({-1, 0, -1});
+    propagate_transforms(w);
+    REQUIRE(rig->renderer->render(w, cam, dark()).has_value());
+    px = rig->renderer->read_pixels();
+    REQUIRE(px.has_value());
+    const Rgb metal = pixel(px.value(), 64, 18, 32), plastic = pixel(px.value(), 64, 46, 32);
+    std::printf("    metal = (%d, %d, %d), dielectric = (%d, %d, %d)\n", metal.r, metal.g, metal.b, plastic.r,
+                plastic.g, plastic.b);
+    CHECK(metal.r < 30);
+    CHECK(plastic.r > 100);
+    CHECK_EQ(rig->renderer->validation_errors(), 0u);
+}
+
+AETHER_TEST(headless_normal_map_changes_shading) {
+    auto rig = make_rig();
+    // 1x1 linear normal maps: straight out of the surface, and tilted fully
+    // toward the tangent (+u), i.e. +X on the cube's +Z face.
+    auto flat = rig->renderer->upload_texture(TextureData{1, 1, {128, 128, 255, 255}, false});
+    auto tilted = rig->renderer->upload_texture(TextureData{1, 1, {255, 128, 128, 255}, false});
+    REQUIRE(flat.has_value() && tilted.has_value());
+    World w({.seed = 1});
+    const Entity a = spawn_cube(w, rig->cube, {-1.2f, 0, 0}, {1, 1, 1});
+    const Entity b = spawn_cube(w, rig->cube, {1.2f, 0, 0}, {1, 1, 1});
+    w.get<MeshInstance>(a)->normal_texture = flat.value();
+    w.get<MeshInstance>(b)->normal_texture = tilted.value();
+    add_sun(w, {0, 0, -1}, 3.0f);
+    propagate_transforms(w);
+    Camera cam;
+    cam.position = {0, 0, 6};
+    REQUIRE(rig->renderer->render(w, cam, dark()).has_value());
+    auto px = rig->renderer->read_pixels();
+    REQUIRE(px.has_value());
+    const Rgb fa = pixel(px.value(), 64, 18, 32), fb = pixel(px.value(), 64, 46, 32);
+    std::printf("    flat normal = %d, tilted normal = %d\n", fa.r, fb.r);
+    CHECK(fa.r > 120);
+    CHECK(fb.r < 20);  // the tilted normal is perpendicular to the light
+    CHECK_EQ(rig->renderer->validation_errors(), 0u);
+}
+
+AETHER_TEST(headless_point_light_falls_off_with_range) {
+    auto rig = make_rig();
+    World w({.seed = 1});
+    const Entity floor = spawn_cube(w, rig->cube, {0, -0.05f, 0}, {1, 1, 1});
+    w.get<Transform>(floor)->scale = {10, 0.1f, 10};
+    add_sun(w, {0, -1, 0}, 0.0f);
+    const Entity bulb = w.create();
+    w.add<Transform>(bulb, Transform{{-2, 0.5f, 0}});
+    Light light;
+    light.type = LightType::Point;
+    light.intensity = 5;
+    light.range = 3;
+    w.add<Light>(bulb, light);
+    propagate_transforms(w);
+    Camera cam;
+    cam.position = {0, 6, 5};
+    auto stats = rig->renderer->render(w, cam, dark());
+    REQUIRE(stats.has_value());
+    CHECK_EQ(stats.value().point_lights, 1u);
+    auto px = rig->renderer->read_pixels();
+    REQUIRE(px.has_value());
+    const Rgb near_light = at(px.value(), cam, {-2, 0, 0});
+    const Rgb far_away = at(px.value(), cam, {2, 0, 0});  // 4 m away, beyond the range
+    std::printf("    near = %d, beyond range = %d\n", near_light.r, far_away.r);
+    CHECK(near_light.r > 100);
+    CHECK(far_away.r <= 3);
+    CHECK_EQ(rig->renderer->validation_errors(), 0u);
+}
+
+AETHER_TEST(headless_sun_casts_shadows) {
+    auto rig = make_rig();
+    World w({.seed = 1});
+    const Entity floor = spawn_cube(w, rig->cube, {0, -0.05f, 0}, {1, 1, 1});
+    w.get<Transform>(floor)->scale = {10, 0.1f, 10};
+    spawn_cube(w, rig->cube, {0, 1, 0}, {1, 1, 1});
+    // Light travels down and toward +X: the cube's shadow falls on x in [0, 2].
+    const Entity sun = add_sun(w, {1, -1, 0}, 3.0f);
+    propagate_transforms(w);
+    Camera cam;
+    cam.position = {0, 10, 6};
+    auto stats = rig->renderer->render(w, cam, dark());
+    REQUIRE(stats.has_value());
+    CHECK(stats.value().sun_shadows);
+    CHECK_EQ(stats.value().shadow_draws, 2u);
+    auto px = rig->renderer->read_pixels();
+    REQUIRE(px.has_value());
+    const Rgb shadowed = at(px.value(), cam, {1.5f, 0, 0});
+    const Rgb lit = at(px.value(), cam, {-1.5f, 0, 0});
+    std::printf("    shadowed = %d, lit = %d\n", shadowed.r, lit.r);
+    CHECK(lit.r > 100);
+    CHECK(shadowed.r < lit.r / 4);
+
+    // Without shadows both spots receive the same light.
+    w.get<Light>(sun)->cast_shadows = false;
+    stats = rig->renderer->render(w, cam, dark());
+    REQUIRE(stats.has_value());
+    CHECK(!stats.value().sun_shadows);
+    CHECK_EQ(stats.value().shadow_draws, 0u);
+    px = rig->renderer->read_pixels();
+    REQUIRE(px.has_value());
+    CHECK(std::abs(at(px.value(), cam, {1.5f, 0, 0}).r - at(px.value(), cam, {-1.5f, 0, 0}).r) <= 6);
     CHECK_EQ(rig->renderer->validation_errors(), 0u);
 }
 
@@ -278,7 +452,7 @@ AETHER_TEST(headless_texture_multiplies_base_color) {
     const Rgb right = pixel(px.value(), 64, 38, 32);
     std::printf("    left = (%d, %d, %d), right = (%d, %d, %d)\n", left.r, left.g, left.b, right.r, right.g, right.b);
     CHECK(left.r > 150 && left.g < 20 && left.b < 20);
-    CHECK(right.b > 150 && right.r < 20 && right.g < 20);
+    CHECK(right.b > 150 && right.r < 40 && right.g < 20);  // ambient specular adds a little white
     CHECK_EQ(rig->renderer->validation_errors(), 0u);
 }
 
@@ -288,9 +462,9 @@ AETHER_TEST(headless_model_library_loads_spawns_and_renders_sample_models) {
     REQUIRE(lib.has_value());
     auto& library = *lib.value();
     const auto models = library.list_models();
-    REQUIRE(models.size() == 3u);
+    REQUIRE(models.size() == 4u);
     CHECK_EQ(models[0], std::string("models/crate.glb"));
-    CHECK_EQ(models[2], std::string("models/tree/tree.gltf"));
+    CHECK_EQ(models[3], std::string("models/tree/tree.gltf"));
 
     for (const auto& path : models) {
         auto m = library.load(path);
@@ -335,7 +509,18 @@ AETHER_TEST(headless_model_library_loads_spawns_and_renders_sample_models) {
     CHECK(c.r > 30);  // sRGB texels are linearised; the target stores linear values
     // Bounds feed picking: the crate is a unit box.
     MeshId crate_mesh = 0;
-    cw.each<MeshInstance>([&](Entity, MeshInstance& m) { crate_mesh = m.mesh; });
+    MeshInstance crate_material;
+    cw.each<MeshInstance>([&](Entity, MeshInstance& m) {
+        crate_mesh = m.mesh;
+        crate_material = m;
+    });
+    // The crate's material: colour, normal and metallic-roughness maps, the
+    // latter two uploaded as linear data under their own names.
+    CHECK(crate_material.normal_texture != kWhiteTexture);
+    CHECK(crate_material.metallic_roughness_texture != kWhiteTexture);
+    CHECK(crate_material.normal_texture != crate_material.texture);
+    CHECK_EQ(library.names().texture_name_of(crate_material.normal_texture).value_or(""),
+             std::string("asset:models/crate.glb#texture2.linear"));
     CHECK(crate_mesh != library.cube());
     CHECK(std::abs(library.bounds()[crate_mesh].max.x - 0.5f) < 1e-5f);
     CHECK_EQ(rig->renderer->validation_errors(), 0u);

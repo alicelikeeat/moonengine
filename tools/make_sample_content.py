@@ -63,6 +63,43 @@ def crate_texture():
     return png(size, size, pixel)
 
 
+def crate_height(x, y, size=64):
+    """Relief of the crate face: raised frame and diagonals, plank grooves, nail heads."""
+    x, y = x % size, y % size
+    border = x < 5 or y < 5 or x >= size - 5 or y >= size - 5
+    diagonal = abs(x - y) < 4 or abs(x - (size - 1 - y)) < 4
+    if (border or diagonal) and (x % 16 == 8 and y % 16 == 8):
+        return 1.3  # nail head
+    if border or diagonal:
+        return 1.0
+    return 0.0 if y % 9 == 0 else 0.45  # groove between planks
+
+
+def crate_normal_texture():
+    """Tangent-space normal map from crate_height (glTF: +X right, +Y up the image)."""
+    size, strength = 64, 1.6
+
+    def pixel(x, y):
+        dx = (crate_height(x + 1, y) - crate_height(x - 1, y)) * 0.5 * strength
+        dy = (crate_height(x, y - 1) - crate_height(x, y + 1)) * 0.5 * strength  # image up
+        nx, ny, nz = -dx, -dy, 1.0
+        length = math.sqrt(nx * nx + ny * ny + nz * nz)
+        return tuple(int(round((c / length * 0.5 + 0.5) * 255)) for c in (nx, ny, nz)) + (255,)
+
+    return png(size, size, pixel)
+
+
+def crate_metal_rough_texture():
+    """G = roughness, B = metallic: rough wood, shiny metal nail heads."""
+    size = 64
+
+    def pixel(x, y):
+        nail = crate_height(x, y) > 1.1
+        return (0, 90, 255, 255) if nail else (0, 200, 0, 255)
+
+    return png(size, size, pixel)
+
+
 def checker_texture():
     size = 32
 
@@ -141,6 +178,24 @@ def cone(radius, height, base_y, segments):
     return prim
 
 
+def sphere(radius, rings, segments):
+    prim = Prim()
+    for i in range(rings + 1):
+        v = i / rings
+        theta = math.pi * v
+        for j in range(segments + 1):
+            u = j / segments
+            phi = 2 * math.pi * u
+            n = (math.sin(theta) * math.cos(phi), math.cos(theta), -math.sin(theta) * math.sin(phi))
+            prim.vertex(tuple(c * radius for c in n), n, (u, v))
+    for i in range(rings):
+        for j in range(segments):
+            a = i * (segments + 1) + j
+            b = a + segments + 1
+            prim.indices += [a, b, b + 1, a, b + 1, a + 1]
+    return prim
+
+
 def torus(major, minor, rings, sides):
     prim = Prim()
     for i in range(rings + 1):
@@ -192,15 +247,22 @@ class Gltf:
         self.doc["accessors"].append(acc)
         return len(self.doc["accessors"]) - 1
 
-    def material(self, name, color, texture_png=None):
-        mat = {"name": name, "pbrMetallicRoughness": {"baseColorFactor": list(color) + [1.0],
-                                                      "metallicFactor": 0.0, "roughnessFactor": 0.8}}
+    def _texture(self, png_bytes):
+        image_view = self._view(png_bytes)
+        self.doc.setdefault("images", []).append({"bufferView": image_view, "mimeType": "image/png"})
+        self.doc.setdefault("samplers", [{"magFilter": 9729, "minFilter": 9987}])
+        self.doc.setdefault("textures", []).append({"source": len(self.doc["images"]) - 1, "sampler": 0})
+        return len(self.doc["textures"]) - 1
+
+    def material(self, name, color, texture_png=None, metallic=0.0, roughness=0.8, normal_png=None, mr_png=None):
+        pbr = {"baseColorFactor": list(color) + [1.0], "metallicFactor": metallic, "roughnessFactor": roughness}
+        mat = {"name": name, "pbrMetallicRoughness": pbr}
         if texture_png is not None:
-            image_view = self._view(texture_png)
-            self.doc.setdefault("images", []).append({"bufferView": image_view, "mimeType": "image/png"})
-            self.doc.setdefault("samplers", [{"magFilter": 9729, "minFilter": 9987}])
-            self.doc.setdefault("textures", []).append({"source": len(self.doc["images"]) - 1, "sampler": 0})
-            mat["pbrMetallicRoughness"]["baseColorTexture"] = {"index": len(self.doc["textures"]) - 1}
+            pbr["baseColorTexture"] = {"index": self._texture(texture_png)}
+        if mr_png is not None:
+            pbr["metallicRoughnessTexture"] = {"index": self._texture(mr_png)}
+        if normal_png is not None:
+            mat["normalTexture"] = {"index": self._texture(normal_png)}
         self.doc["materials"].append(mat)
         return len(self.doc["materials"]) - 1
 
@@ -258,7 +320,8 @@ class Gltf:
 
 def make_crate():
     g = Gltf()
-    mat = g.material("Crate", (1.0, 1.0, 1.0), crate_texture())
+    mat = g.material("Crate", (1.0, 1.0, 1.0), crate_texture(), metallic=1.0, roughness=1.0,
+                     normal_png=crate_normal_texture(), mr_png=crate_metal_rough_texture())
     mesh = g.mesh("Crate", [(box(1, 1, 1), mat)])
     g.node("Crate", mesh, root=True)
     return g.glb()
@@ -278,7 +341,7 @@ def make_tree():
 
 def make_torus():
     g = Gltf()
-    mat = g.material("Checker", (1.0, 1.0, 1.0), checker_texture())
+    mat = g.material("Checker", (1.0, 1.0, 1.0), checker_texture(), roughness=0.35)
     mesh = g.mesh("Torus", [(torus(0.7, 0.25, 48, 16), mat)])
     # Stands upright: a quarter turn about X.
     s = math.sqrt(0.5)
@@ -286,10 +349,19 @@ def make_torus():
     return g.glb()
 
 
+def make_gold_sphere():
+    g = Gltf()
+    mat = g.material("Polished Gold", (1.0, 0.78, 0.34), metallic=1.0, roughness=0.25)
+    mesh = g.mesh("Sphere", [(sphere(0.5, 24, 48), mat)])
+    g.node("Gold Sphere", mesh, root=True, translation=[0.0, 0.5, 0.0])
+    return g.glb()
+
+
 def outputs():
     tree_json, tree_bin = make_tree()
     return {
         "models/crate.glb": make_crate(),
+        "models/gold_sphere.glb": make_gold_sphere(),
         "models/torus.glb": make_torus(),
         "models/tree/tree.gltf": tree_json,
         "models/tree/tree.bin": tree_bin,

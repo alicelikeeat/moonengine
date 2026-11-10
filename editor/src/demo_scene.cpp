@@ -3,6 +3,7 @@
 #include <string>
 
 #include "aether/gameplay/spin.hpp"
+#include "aether/render/light.hpp"
 #include "aether/render/mesh_registry.hpp"
 #include "aether/world/hierarchy.hpp"
 #include "aether/world/name.hpp"
@@ -29,9 +30,19 @@ void build_demo_scene(world::World& w, render::MeshId cube) {
 
     const world::Entity system = make(w, "Solar System", {0, 1.5f, 0}, 1.0f);
     const world::Entity sun = make(w, "Sun", {0, 0, 0}, 2.2f);
-    w.add<render::MeshInstance>(sun, render::MeshInstance{cube, {1.0f, 0.72f, 0.2f}});
+    render::MeshInstance sun_mesh{cube, {1.0f, 0.72f, 0.2f}};
+    sun_mesh.emissive = {1.6f, 0.9f, 0.25f};  // glows; the point light below lights the planets
+    w.add<render::MeshInstance>(sun, sun_mesh);
     w.add<Spin>(sun, Spin{{0, 1, 0}, 0.25f});
     (void)world::hierarchy::set_parent(w, sun, system);
+    const world::Entity glow = make(w, "Sun Glow", {0, 0, 0}, 1.0f);
+    render::Light glow_light;
+    glow_light.type = render::LightType::Point;
+    glow_light.color = {1.0f, 0.78f, 0.45f};
+    glow_light.intensity = 40.0f;
+    glow_light.range = 24.0f;
+    w.add<render::Light>(glow, glow_light);
+    (void)world::hierarchy::set_parent(w, glow, system);
 
     for (int i = 0; i < 6; ++i) {
         const float fi = static_cast<float>(i);
@@ -41,7 +52,9 @@ void build_demo_scene(world::World& w, render::MeshId cube) {
         (void)world::hierarchy::set_parent(w, orbit, system);
 
         const world::Entity planet = make(w, planets[i], {3.5f + 1.7f * fi, 0, 0}, 0.9f);
-        w.add<render::MeshInstance>(planet, render::MeshInstance{cube, palette[i]});
+        render::MeshInstance planet_mesh{cube, palette[i]};
+        planet_mesh.roughness = 0.35f + 0.1f * fi;
+        w.add<render::MeshInstance>(planet, planet_mesh);
         w.add<Spin>(planet, Spin{{0.3f, 1, 0.2f}, 1.5f});
         (void)world::hierarchy::set_parent(w, planet, orbit);
 
@@ -53,7 +66,10 @@ void build_demo_scene(world::World& w, render::MeshId cube) {
             w.add<Spin>(moon_orbit, Spin{{0, 1, 0}, 2.5f + fm});
             (void)world::hierarchy::set_parent(w, moon_orbit, planet);
             const world::Entity moon = make(w, moon_name, {1.3f + 0.7f * fm, 0, 0}, 0.35f);
-            w.add<render::MeshInstance>(moon, render::MeshInstance{cube, {0.85f, 0.85f, 0.9f}});
+            render::MeshInstance moon_mesh{cube, {0.85f, 0.85f, 0.9f}};
+            moon_mesh.metallic = 1.0f;  // polished metal moons
+            moon_mesh.roughness = 0.3f;
+            w.add<render::MeshInstance>(moon, moon_mesh);
             w.add<Spin>(moon, Spin{{1, 1, 0}, 3.0f});
             (void)world::hierarchy::set_parent(w, moon, moon_orbit);
         }
@@ -61,7 +77,17 @@ void build_demo_scene(world::World& w, render::MeshId cube) {
 
     const world::Entity floor = make(w, "Floor", {0, -0.07f, 0}, 1.0f);  // top just below the grid
     w.get<world::Transform>(floor)->scale = {50, 0.1f, 50};  // matches the 50 m editor grid
-    w.add<render::MeshInstance>(floor, render::MeshInstance{cube, {0.09f, 0.095f, 0.105f}});
+    render::MeshInstance floor_mesh{cube, {0.09f, 0.095f, 0.105f}};
+    floor_mesh.roughness = 0.9f;
+    w.add<render::MeshInstance>(floor, floor_mesh);
+
+    // Daylight from above, casting shadows onto the floor.
+    const world::Entity daylight = make(w, "Sun Light", {6, 12, 6}, 1.0f, render::rotation_toward({-0.45f, -1.0f, -0.3f}));
+    render::Light day;
+    day.type = render::LightType::Directional;
+    day.color = {1.0f, 0.96f, 0.9f};
+    day.intensity = 2.5f;
+    w.add<render::Light>(daylight, day);
     world::propagate_transforms(w);
 }
 

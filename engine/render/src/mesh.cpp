@@ -27,7 +27,10 @@ MeshData make_cube(float size) {
         const Vec3 c = f.normal * h;
         static constexpr std::pair<float, float> kCorners[4] = {{-1.f, -1.f}, {1.f, -1.f}, {1.f, 1.f}, {-1.f, 1.f}};
         for (const auto& [su, sv] : kCorners)
-            mesh.vertices.push_back({c + f.u * (su * h) + f.v * (sv * h), f.normal, {(su + 1) * 0.5f, (1 - sv) * 0.5f}});
+            // Tangent = u (increasing tex u); cross(normal, u) = v points up
+            // the image (decreasing tex v), so the handedness is +1.
+            mesh.vertices.push_back({c + f.u * (su * h) + f.v * (sv * h), f.normal, {(su + 1) * 0.5f, (1 - sv) * 0.5f},
+                                     {f.u.x, f.u.y, f.u.z, 1.0f}});
         for (const std::uint32_t i : {0u, 1u, 2u, 0u, 2u, 3u}) mesh.indices.push_back(base + i);
     }
     return mesh;

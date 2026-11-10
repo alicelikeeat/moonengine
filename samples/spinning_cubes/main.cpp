@@ -33,6 +33,7 @@
 #include "aether/world/schedule.hpp"
 #include "aether/world/serialization.hpp"
 #include "aether/gameplay/spin.hpp"
+#include "aether/render/light.hpp"
 #include "aether/render/mesh_registry.hpp"
 #include "aether/render/model_library.hpp"
 
@@ -75,7 +76,23 @@ Entity spawn(World& w, render::MeshId mesh, Vec3 pos, float scale, Vec3 color, S
 }
 
 void build_scene(World& w, render::MeshId cube) {
-    spawn(w, cube, {0, 0, 0}, 2.2f, {1.0f, 0.72f, 0.2f}, {{0, 1, 0}, 0.25f});  // the sun
+    // The sun glows (emissive) and lights the planets (a point light).
+    const Entity sun = spawn(w, cube, {0, 0, 0}, 2.2f, {1.0f, 0.72f, 0.2f}, {{0, 1, 0}, 0.25f});
+    w.get<render::MeshInstance>(sun)->emissive = {1.6f, 0.9f, 0.25f};
+    const Entity glow = w.create();
+    w.add<Transform>(glow, Transform{});
+    render::Light glow_light;
+    glow_light.color = {1.0f, 0.78f, 0.45f};
+    glow_light.intensity = 40.0f;
+    glow_light.range = 24.0f;
+    w.add<render::Light>(glow, glow_light);
+    // Soft daylight from above so the far side of each planet is not black.
+    const Entity daylight = w.create();
+    w.add<Transform>(daylight, Transform{{0, 10, 0}, render::rotation_toward({-0.3f, -1.0f, -0.4f})});
+    render::Light day;
+    day.type = render::LightType::Directional;
+    day.intensity = 1.2f;
+    w.add<render::Light>(daylight, day);
     const Vec3 palette[] = {{0.3f, 0.6f, 1.0f}, {0.4f, 0.9f, 0.5f}, {0.9f, 0.35f, 0.4f},
                             {0.7f, 0.5f, 1.0f}, {0.2f, 0.85f, 0.85f}, {0.95f, 0.6f, 0.3f}};
     for (int i = 0; i < 6; ++i) {
@@ -96,6 +113,8 @@ void build_scene(World& w, render::MeshId cube) {
             (void)hierarchy::set_parent(w, moon_orbit, planet);
             // Planet scale (0.9) also scales the moon's offset and size.
             const Entity moon = spawn(w, cube, {1.3f + 0.7f * fm, 0, 0}, 0.35f, {0.85f, 0.85f, 0.9f}, {{1, 1, 0}, 3.0f});
+            w.get<render::MeshInstance>(moon)->metallic = 1.0f;
+            w.get<render::MeshInstance>(moon)->roughness = 0.3f;
             (void)hierarchy::set_parent(w, moon, moon_orbit);
         }
     }

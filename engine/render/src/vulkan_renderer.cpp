@@ -1,9 +1,10 @@
 // Vulkan 1.3 backend for aether::render::Renderer.
 //
-// Deliberately small: one graphics pipeline, dynamic rendering, two frames
-// in flight, host-visible mesh buffers. It is the first working slice of
-// the renderer, not the final architecture (render graph, GPU-driven
-// culling and a real memory allocator are on the roadmap).
+// Deliberately small: forward rendering with dynamic rendering, two frames
+// in flight, host-visible mesh buffers, one descriptor set per frame (all
+// textures as an array, the frame's uniforms, the sun's shadow map). It is
+// a working slice of the renderer, not the final architecture (render
+// graph, GPU-driven culling and a real memory allocator are on the roadmap).
 #include <volk.h>
 
 #include <imgui.h>
@@ -11,11 +12,14 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
+#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "aether/render/light.hpp"
 #include "aether/render/renderer.hpp"
 #include "aether/world/hierarchy.hpp"
 #include "generated/shaders.inl"
@@ -34,15 +38,46 @@ constexpr VkFormat kViewportRenderFormat = VK_FORMAT_R8G8B8A8_SRGB;
 constexpr VkFormat kViewportSampleFormat = VK_FORMAT_R8G8B8A8_UNORM;
 constexpr float kGridHalfExtent = 1000.0f;  // analytic grid quad; the shader fades it out
 constexpr const char* kValidationLayer = "VK_LAYER_KHRONOS_validation";
+// Must match the textures[] array size in mesh.frag.
+constexpr std::uint32_t kMaxTextures = 1024;
+constexpr std::uint32_t kShadowMapSize = 2048;
+constexpr VkFormat kShadowFormat = VK_FORMAT_D32_SFLOAT;
+constexpr float kShadowReach = 40.0f;  // the sun's shadow map covers +-this around the camera target
 
+// Layouts below must match engine/render/shaders/common.glsl.
 struct PushConstants {
-    float mvp[16];
-    float normal0[4];
-    float normal1[4];
-    float normal2[4];
+    float model[16];
+    float base_color[4];      // rgb, a: highlight
+    float emissive_rough[4];  // rgb: emissive, a: roughness
+    std::uint32_t material[4];  // base colour, metallic-roughness and normal textures; metallic bits
+};
+static_assert(sizeof(PushConstants) == 112, "must fit the guaranteed 128-byte push constant size");
+
+struct GpuPointLight {
+    float position_range[4];
     float color[4];
 };
-static_assert(sizeof(PushConstants) == 128, "must fit the guaranteed push constant size");
+
+struct FrameUniforms {  // std140
+    float view_proj[16];
+    float light_view_proj[16];
+    float camera_position[4];
+    float sun_direction[4];
+    float sun_color[4];
+    float sky_color[4];
+    float ground_color[4];
+    float shadow_params[4];
+    std::uint32_t counts[4];
+    GpuPointLight points[kMaxPointLights];
+};
+static_assert(sizeof(FrameUniforms) == 752, "std140 layout of the Frame block");
+
+void set4(float* out, math::Vec3 v, float w) {
+    out[0] = v.x;
+    out[1] = v.y;
+    out[2] = v.z;
+    out[3] = w;
+}
 
 const char* result_name(VkResult r) {
     switch (r) {
@@ -101,19 +136,28 @@ struct GpuTexture {
     VkImage image = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
-    VkDescriptorSet set = VK_NULL_HANDLE;
 };
 
 struct GpuMesh {
     Buffer vertices;
     Buffer indices;
     std::uint32_t index_count = 0;
+    Aabb bounds;
 };
 
 struct Frame {
     VkCommandBuffer cmd = VK_NULL_HANDLE;
     VkFence fence = VK_NULL_HANDLE;
     VkSemaphore image_available = VK_NULL_HANDLE;
+    Buffer uniforms;                         // FrameUniforms, host-visible
+    VkDescriptorSet set = VK_NULL_HANDLE;    // textures, uniforms, shadow map
+};
+
+// One draw of the frame, gathered before recording.
+struct Draw {
+    world::Entity entity;
+    math::Mat4 model;
+    MeshInstance instance;
 };
 
 class VulkanRenderer final : public Renderer {
@@ -158,7 +202,8 @@ private:
     void destroy_targets();
     Result<void> create_swapchain();
     Result<void> create_grid();
-    Result<void> create_material_resources();
+    Result<void> create_descriptors();
+    void write_texture_descriptor(std::uint32_t slot, VkImageView view);
     Result<void> init_ui();
     Result<void> create_viewport_target();
     void destroy_viewport_target();
@@ -170,9 +215,15 @@ private:
                                VkImageAspectFlags aspect);
     void destroy_image(Image& img);
 
+    // Gathers draws and lights and fills the current frame's uniforms.
+    void prepare_frame(world::World& world, const Camera& camera, const RenderOptions& options, VkExtent2D extent,
+                       FrameStats& stats);
+    // Renders the sun's shadow map (cleared when shadows are off) and leaves
+    // it readable by the scene pass.
+    void record_shadows(VkCommandBuffer cmd, FrameStats& stats);
     // Draws the scene into `color` (left in COLOR_ATTACHMENT_OPTIMAL).
     void record_scene(VkCommandBuffer cmd, VkImage color, VkImageView color_view, VkExtent2D extent,
-                      world::World& world, const Camera& camera, const RenderOptions& options, FrameStats& stats);
+                      const RenderOptions& options, FrameStats& stats);
     static void image_barrier(VkCommandBuffer cmd, VkImage image, VkImageAspectFlags aspect,
                               VkImageLayout from, VkImageLayout to, VkPipelineStageFlags2 src_stage,
                               VkAccessFlags2 src_access, VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access);
@@ -197,6 +248,7 @@ private:
     VkPipelineLayout layout_ = VK_NULL_HANDLE;
     VkPipeline pipeline_ = VK_NULL_HANDLE;
     VkPipeline grid_pipeline_ = VK_NULL_HANDLE;
+    VkPipeline shadow_pipeline_ = VK_NULL_HANDLE;
     VkFormat scene_format_ = kOffscreenFormat;  // what the scene pipelines render to
     VkFormat color_format_ = kOffscreenFormat;  // swapchain format
     VkColorSpaceKHR color_space_ = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
@@ -217,12 +269,20 @@ private:
     std::vector<GpuMesh> meshes_;
     Buffer grid_;  // 6 vertices: one large quad on the XZ plane
 
-    // Materials: one combined image sampler (base colour) per texture.
-    VkDescriptorSetLayout material_layout_ = VK_NULL_HANDLE;
-    VkDescriptorPool material_pool_ = VK_NULL_HANDLE;
+    // Descriptors: binding 0 = all textures (unused slots show white),
+    // 1 = frame uniforms, 2 = shadow map. One set per frame in flight.
+    VkDescriptorSetLayout set_layout_ = VK_NULL_HANDLE;
+    VkDescriptorPool descriptor_pool_ = VK_NULL_HANDLE;
     VkSampler texture_sampler_ = VK_NULL_HANDLE;
+    VkSampler shadow_sampler_ = VK_NULL_HANDLE;
     std::vector<GpuTexture> textures_;  // [0] = white
     std::uint32_t max_texture_size_ = 4096;
+    float max_anisotropy_ = 0.0f;  // 0: anisotropic filtering unavailable
+    Image shadow_map_;
+
+    // Per-frame scene data, rebuilt by prepare_frame().
+    std::vector<Draw> draws_;
+    bool sun_shadows_ = false;
 
     // UI mode
     bool ui_ = false;
@@ -284,7 +344,7 @@ Result<void> VulkanRenderer::init(const RendererDesc& desc) {
                 }
         scene_format_ = ui_ ? kViewportRenderFormat : color_format_;
     }
-    AETHER_TRY(create_material_resources());
+    AETHER_TRY(create_descriptors());
     AETHER_TRY(create_pipeline());
     AETHER_TRY(create_grid());
     {
@@ -382,6 +442,13 @@ Result<void> VulkanRenderer::pick_device() {
         f2.pNext = &f13;
         vkGetPhysicalDeviceFeatures2(pd, &f2);
         if (!f13.dynamicRendering || !f13.synchronization2) { reject("dynamic rendering or synchronization2 missing"); continue; }
+        if (!f2.features.shaderSampledImageArrayDynamicIndexing) { reject("texture array indexing not supported"); continue; }
+        if (props.limits.maxPerStageDescriptorSamplers < kMaxTextures + 1 ||
+            props.limits.maxPerStageDescriptorSampledImages < kMaxTextures + 1 ||
+            props.limits.maxDescriptorSetSamplers < kMaxTextures + 1) {
+            reject("fewer than 1025 textures per shader stage");
+            continue;
+        }
 
         if (!headless()) {
             std::uint32_t ext_count = 0;
@@ -422,6 +489,7 @@ Result<void> VulkanRenderer::pick_device() {
             info_.name = props.deviceName;
             info_.software = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU;
             max_texture_size_ = props.limits.maxImageDimension2D;
+            max_anisotropy_ = f2.features.samplerAnisotropy ? std::min(8.0f, props.limits.maxSamplerAnisotropy) : 0.0f;
             info_.api = "Vulkan " + std::to_string(VK_API_VERSION_MAJOR(props.apiVersion)) + "." +
                         std::to_string(VK_API_VERSION_MINOR(props.apiVersion)) + "." +
                         std::to_string(VK_API_VERSION_PATCH(props.apiVersion));
@@ -445,10 +513,14 @@ Result<void> VulkanRenderer::create_device() {
     VkPhysicalDeviceVulkan13Features f13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
     f13.dynamicRendering = VK_TRUE;
     f13.synchronization2 = VK_TRUE;
+    VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+    features.pNext = &f13;
+    features.features.shaderSampledImageArrayDynamicIndexing = VK_TRUE;
+    features.features.samplerAnisotropy = max_anisotropy_ > 0.0f ? VK_TRUE : VK_FALSE;
 
     const char* swapchain_ext = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
     VkDeviceCreateInfo info{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
-    info.pNext = &f13;
+    info.pNext = &features;
     info.queueCreateInfoCount = 1;
     info.pQueueCreateInfos = &queue;
     info.enabledExtensionCount = headless() ? 0 : 1;
@@ -496,7 +568,7 @@ Result<void> VulkanRenderer::create_pipeline() {
     VkPushConstantRange push{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PushConstants)};
     VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     layout.setLayoutCount = 1;
-    layout.pSetLayouts = &material_layout_;
+    layout.pSetLayouts = &set_layout_;
     layout.pushConstantRangeCount = 1;
     layout.pPushConstantRanges = &push;
     VkResult r = vkCreatePipelineLayout(device_, &layout, nullptr, &layout_);
@@ -513,15 +585,16 @@ Result<void> VulkanRenderer::create_pipeline() {
         stages[1].pName = "main";
 
         VkVertexInputBindingDescription binding{0, sizeof(Vertex), VK_VERTEX_INPUT_RATE_VERTEX};
-        VkVertexInputAttributeDescription attrs[3] = {
+        VkVertexInputAttributeDescription attrs[4] = {
             {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, position)},
             {1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, normal)},
             {2, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, uv)},
+            {3, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Vertex, tangent)},
         };
         VkPipelineVertexInputStateCreateInfo vertex_input{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
         vertex_input.vertexBindingDescriptionCount = 1;
         vertex_input.pVertexBindingDescriptions = &binding;
-        vertex_input.vertexAttributeDescriptionCount = 3;
+        vertex_input.vertexAttributeDescriptionCount = 4;
         vertex_input.pVertexAttributeDescriptions = attrs;
 
         VkPipelineInputAssemblyStateCreateInfo assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
@@ -579,8 +652,8 @@ Result<void> VulkanRenderer::create_pipeline() {
         info.layout = layout_;
         r = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline_);
         if (r == VK_SUCCESS) {
-            // Ground grid: same vertex layout and push constants, its own
-            // shaders, alpha-blended, depth-tested but not written.
+            // Ground grid: same vertex buffer layout (positions only used),
+            // its own shaders, alpha-blended, depth-tested but not written.
             VkShaderModule grid_vert = VK_NULL_HANDLE, grid_frag = VK_NULL_HANDLE;
             r = make_module(shaders::kGridVertSpv, sizeof(shaders::kGridVertSpv), grid_vert);
             if (r == VK_SUCCESS) r = make_module(shaders::kGridFragSpv, sizeof(shaders::kGridFragSpv), grid_frag);
@@ -588,7 +661,7 @@ Result<void> VulkanRenderer::create_pipeline() {
                 stages[0].module = grid_vert;
                 stages[1].module = grid_frag;
                 raster.cullMode = VK_CULL_MODE_NONE;
-                vertex_input.vertexAttributeDescriptionCount = 2;  // the grid has no UVs
+                vertex_input.vertexAttributeDescriptionCount = 1;  // positions only
                 depth.depthWriteEnable = VK_FALSE;
                 depth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
                 blend_attachment.blendEnable = VK_TRUE;
@@ -602,6 +675,28 @@ Result<void> VulkanRenderer::create_pipeline() {
             }
             if (grid_vert) vkDestroyShaderModule(device_, grid_vert, nullptr);
             if (grid_frag) vkDestroyShaderModule(device_, grid_frag, nullptr);
+        }
+        if (r == VK_SUCCESS) {
+            // Shadow map: depth only, both faces (open meshes still cast),
+            // slope-scaled bias against acne on steep surfaces.
+            VkShaderModule shadow_vert = VK_NULL_HANDLE;
+            r = make_module(shaders::kShadowVertSpv, sizeof(shaders::kShadowVertSpv), shadow_vert);
+            if (r == VK_SUCCESS) {
+                stages[0].module = shadow_vert;
+                info.stageCount = 1;
+                raster.cullMode = VK_CULL_MODE_NONE;
+                raster.depthBiasEnable = VK_TRUE;
+                raster.depthBiasConstantFactor = 0.0f;
+                raster.depthBiasSlopeFactor = 1.5f;
+                depth.depthWriteEnable = VK_TRUE;
+                depth.depthCompareOp = VK_COMPARE_OP_LESS;
+                blend.attachmentCount = 0;
+                VkPipelineRenderingCreateInfo shadow_rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+                shadow_rendering.depthAttachmentFormat = kShadowFormat;
+                info.pNext = &shadow_rendering;
+                r = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &info, nullptr, &shadow_pipeline_);
+            }
+            if (shadow_vert) vkDestroyShaderModule(device_, shadow_vert, nullptr);
         }
     }
     vkDestroyShaderModule(device_, vert, nullptr);
@@ -947,23 +1042,34 @@ Result<void> VulkanRenderer::create_swapchain() {
     return ok();
 }
 
-Result<void> VulkanRenderer::create_material_resources() {
-    VkDescriptorSetLayoutBinding binding{};
-    binding.binding = 0;
-    binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    binding.descriptorCount = 1;
-    binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+Result<void> VulkanRenderer::create_descriptors() {
+    VkDescriptorSetLayoutBinding bindings[3]{};
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[0].descriptorCount = kMaxTextures;
+    bindings[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[1].binding = 1;
+    bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[2].binding = 2;
+    bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     VkDescriptorSetLayoutCreateInfo layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    layout.bindingCount = 1;
-    layout.pBindings = &binding;
-    AETHER_VK_TRY(vkCreateDescriptorSetLayout(device_, &layout, nullptr, &material_layout_));
+    layout.bindingCount = 3;
+    layout.pBindings = bindings;
+    AETHER_VK_TRY(vkCreateDescriptorSetLayout(device_, &layout, nullptr, &set_layout_));
 
-    const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4096};
+    const VkDescriptorPoolSize sizes[2] = {
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (kMaxTextures + 1) * kFramesInFlight},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight},
+    };
     VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    pool.maxSets = 4096;
-    pool.poolSizeCount = 1;
-    pool.pPoolSizes = &size;
-    AETHER_VK_TRY(vkCreateDescriptorPool(device_, &pool, nullptr, &material_pool_));
+    pool.maxSets = kFramesInFlight;
+    pool.poolSizeCount = 2;
+    pool.pPoolSizes = sizes;
+    AETHER_VK_TRY(vkCreateDescriptorPool(device_, &pool, nullptr, &descriptor_pool_));
 
     VkSamplerCreateInfo sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     sampler.magFilter = VK_FILTER_LINEAR;
@@ -971,8 +1077,70 @@ Result<void> VulkanRenderer::create_material_resources() {
     sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
     sampler.addressModeU = sampler.addressModeV = sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     sampler.maxLod = VK_LOD_CLAMP_NONE;
+    sampler.anisotropyEnable = max_anisotropy_ > 0.0f ? VK_TRUE : VK_FALSE;
+    sampler.maxAnisotropy = std::max(1.0f, max_anisotropy_);
     AETHER_VK_TRY(vkCreateSampler(device_, &sampler, nullptr, &texture_sampler_));
+
+    // Hardware depth comparison with bilinear filtering (2x2 PCF per tap).
+    // Outside the map counts as lit.
+    VkSamplerCreateInfo shadow{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    shadow.magFilter = VK_FILTER_LINEAR;
+    shadow.minFilter = VK_FILTER_LINEAR;
+    shadow.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    shadow.addressModeU = shadow.addressModeV = shadow.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    shadow.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+    shadow.compareEnable = VK_TRUE;
+    shadow.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    AETHER_VK_TRY(vkCreateSampler(device_, &shadow, nullptr, &shadow_sampler_));
+
+    auto map = create_image(kShadowMapSize, kShadowMapSize, kShadowFormat,
+                            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                            VK_IMAGE_ASPECT_DEPTH_BIT);
+    if (!map) return map.error();
+    shadow_map_ = map.value();
+
+    for (Frame& f : frames_) {
+        auto ubo = create_buffer(sizeof(FrameUniforms), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+        if (!ubo) return ubo.error();
+        f.uniforms = ubo.value();
+        std::memset(f.uniforms.mapped, 0, sizeof(FrameUniforms));
+        VkDescriptorSetAllocateInfo alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        alloc.descriptorPool = descriptor_pool_;
+        alloc.descriptorSetCount = 1;
+        alloc.pSetLayouts = &set_layout_;
+        AETHER_VK_TRY(vkAllocateDescriptorSets(device_, &alloc, &f.set));
+        const VkDescriptorBufferInfo buffer_info{f.uniforms.buffer, 0, sizeof(FrameUniforms)};
+        const VkDescriptorImageInfo shadow_info{shadow_sampler_, shadow_map_.view, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet writes[2]{};
+        writes[0] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        writes[0].dstSet = f.set;
+        writes[0].dstBinding = 1;
+        writes[0].descriptorCount = 1;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[0].pBufferInfo = &buffer_info;
+        writes[1] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        writes[1].dstSet = f.set;
+        writes[1].dstBinding = 2;
+        writes[1].descriptorCount = 1;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[1].pImageInfo = &shadow_info;
+        vkUpdateDescriptorSets(device_, 2, writes, 0, nullptr);
+    }
     return ok();
+}
+
+void VulkanRenderer::write_texture_descriptor(std::uint32_t slot, VkImageView view) {
+    const VkDescriptorImageInfo info{texture_sampler_, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    for (Frame& f : frames_) {
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = f.set;
+        write.dstBinding = 0;
+        write.dstArrayElement = slot;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = &info;
+        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    }
 }
 
 Result<TextureId> VulkanRenderer::upload_texture(const TextureData& t) {
@@ -981,6 +1149,8 @@ Result<TextureId> VulkanRenderer::upload_texture(const TextureData& t) {
         return Error{ErrorCode::InvalidArgument, "texture exceeds the GPU size limit"};
     const VkDeviceSize bytes = VkDeviceSize{t.width} * t.height * 4;
     if (t.rgba.size() != bytes) return Error{ErrorCode::InvalidArgument, "texture pixel data has the wrong size"};
+    if (textures_.size() >= kMaxTextures)
+        return Error{ErrorCode::OutOfMemory, "texture limit reached (" + std::to_string(kMaxTextures) + ")"};
 
     const VkFormat format = t.srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
     VkFormatProperties fp;
@@ -1117,23 +1287,16 @@ Result<TextureId> VulkanRenderer::upload_texture(const TextureData& t) {
         return vk_error(r, "texture upload");
     }
 
-    VkDescriptorSetAllocateInfo set_alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-    set_alloc.descriptorPool = material_pool_;
-    set_alloc.descriptorSetCount = 1;
-    set_alloc.pSetLayouts = &material_layout_;
-    if (vkAllocateDescriptorSets(device_, &set_alloc, &tex.set) != VK_SUCCESS) {
-        cleanup();
-        return Error{ErrorCode::OutOfMemory, "texture limit reached (4096)"};
-    }
-    VkDescriptorImageInfo image_info{texture_sampler_, tex.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-    VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-    write.dstSet = tex.set;
-    write.descriptorCount = 1;
-    write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    write.pImageInfo = &image_info;
-    vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    // The descriptor sets may be in use by frames still in flight.
+    vkDeviceWaitIdle(device_);
+    const auto id = static_cast<TextureId>(textures_.size());
     textures_.push_back(tex);
-    return static_cast<TextureId>(textures_.size() - 1);
+    if (id == kWhiteTexture) {
+        for (std::uint32_t slot = 0; slot < kMaxTextures; ++slot) write_texture_descriptor(slot, tex.view);
+    } else {
+        write_texture_descriptor(id, tex.view);
+    }
+    return id;
 }
 
 Result<MeshId> VulkanRenderer::upload_mesh(const MeshData& mesh) {
@@ -1156,6 +1319,7 @@ Result<MeshId> VulkanRenderer::upload_mesh(const MeshData& mesh) {
     std::memcpy(gpu.vertices.mapped, mesh.vertices.data(), vbytes);
     std::memcpy(gpu.indices.mapped, mesh.indices.data(), ibytes);
     gpu.index_count = static_cast<std::uint32_t>(mesh.indices.size());
+    gpu.bounds = compute_bounds(mesh);
     meshes_.push_back(gpu);
     return static_cast<MeshId>(meshes_.size() - 1);
 }
@@ -1189,9 +1353,188 @@ void VulkanRenderer::image_barrier(VkCommandBuffer cmd, VkImage image, VkImageAs
     vkCmdPipelineBarrier2(cmd, &dep);
 }
 
+void VulkanRenderer::prepare_frame(world::World& world, const Camera& camera, const RenderOptions& options,
+                                   VkExtent2D extent, FrameStats& stats) {
+    using math::Vec3;
+    draws_.clear();
+    world.each<const world::GlobalTransform, const MeshInstance>(
+        [&](world::Entity entity, const world::GlobalTransform& g, const MeshInstance& inst) {
+            if (inst.mesh < meshes_.size()) draws_.push_back(Draw{entity, g.matrix, inst});
+        });
+
+    // Lights. The sun is the first directional light (preferring one that
+    // casts shadows); a world without any light gets a default sun.
+    struct Point {
+        Vec3 position;
+        Light light;
+        float distance2;
+    };
+    std::vector<Point> points;
+    std::optional<std::pair<Vec3, Light>> sun;  // direction toward the light, light
+    bool any_light = false;
+    world.each<const world::GlobalTransform, const Light>(
+        [&](world::Entity, const world::GlobalTransform& g, const Light& light) {
+            any_light = true;
+            if (light.type == LightType::Directional) {
+                // The light travels along local -Z, so it comes from +Z.
+                const Vec3 z{g.matrix.m[8], g.matrix.m[9], g.matrix.m[10]};
+                if (math::length(z) <= 0) return;
+                if (!sun || (light.cast_shadows && !sun->second.cast_shadows)) sun.emplace(math::normalize(z), light);
+            } else {
+                const Vec3 pos{g.matrix.m[12], g.matrix.m[13], g.matrix.m[14]};
+                const Vec3 d = pos - camera.position;
+                points.push_back({pos, light, math::dot(d, d)});
+            }
+        });
+    if (!any_light) {
+        Light fallback;
+        fallback.type = LightType::Directional;
+        fallback.color = {1.0f, 0.96f, 0.9f};
+        fallback.intensity = 3.0f;
+        sun.emplace(math::normalize(Vec3{0.4f, 0.8f, 0.6f}), fallback);
+    }
+    std::sort(points.begin(), points.end(), [](const Point& a, const Point& b) { return a.distance2 < b.distance2; });
+    if (points.size() > kMaxPointLights) points.resize(kMaxPointLights);
+
+    FrameUniforms u{};
+    const float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
+    const math::Mat4 view_proj = view_projection(camera, aspect);
+    std::memcpy(u.view_proj, view_proj.m, sizeof(u.view_proj));
+    const Environment& env = options.environment;
+    set4(u.camera_position, camera.position, env.exposure);
+    set4(u.sky_color, env.sky_color * env.ambient_intensity, 0);
+    set4(u.ground_color, env.ground_color * env.ambient_intensity, 0);
+    u.counts[0] = static_cast<std::uint32_t>(points.size());
+    for (std::size_t i = 0; i < points.size(); ++i) {
+        set4(u.points[i].position_range, points[i].position, std::max(0.01f, points[i].light.range));
+        set4(u.points[i].color, points[i].light.color * std::max(0.0f, points[i].light.intensity), 0);
+    }
+    stats.point_lights = static_cast<std::uint32_t>(points.size());
+
+    sun_shadows_ = false;
+    if (sun) {
+        const Vec3 to_sun = sun->first;
+        set4(u.sun_color, sun->second.color * std::max(0.0f, sun->second.intensity), 0);
+        // Fit an orthographic shadow projection around the casters near the
+        // camera target. Light space: x = right, y = up, z = along the light.
+        const Vec3 forward = to_sun * -1.0f;
+        const Vec3 helper = std::abs(forward.y) < 0.99f ? Vec3{0, 1, 0} : Vec3{1, 0, 0};
+        const Vec3 right = math::normalize(math::cross(forward, helper));
+        const Vec3 up = math::cross(right, forward);
+        const float inf = std::numeric_limits<float>::infinity();
+        Vec3 lo{inf, inf, inf}, hi{-inf, -inf, -inf};
+        for (const Draw& d : draws_) {
+            const Aabb& b = meshes_[d.instance.mesh].bounds;
+            for (int c = 0; c < 8; ++c) {
+                const Vec3 p = d.model.transform_point(
+                    {(c & 1) ? b.max.x : b.min.x, (c & 2) ? b.max.y : b.min.y, (c & 4) ? b.max.z : b.min.z});
+                const Vec3 l{math::dot(p, right), math::dot(p, up), math::dot(p, forward)};
+                lo = {std::min(lo.x, l.x), std::min(lo.y, l.y), std::min(lo.z, l.z)};
+                hi = {std::max(hi.x, l.x), std::max(hi.y, l.y), std::max(hi.z, l.z)};
+            }
+        }
+        const Vec3 focus{math::dot(camera.target, right), math::dot(camera.target, up), 0};
+        lo.x = std::max(lo.x, focus.x - kShadowReach);
+        lo.y = std::max(lo.y, focus.y - kShadowReach);
+        hi.x = std::min(hi.x, focus.x + kShadowReach);
+        hi.y = std::min(hi.y, focus.y + kShadowReach);
+        if (sun->second.cast_shadows && env.shadows && !draws_.empty() && lo.x < hi.x && lo.y < hi.y) {
+            // Square, snapped to whole texels so the map does not shimmer
+            // as the camera moves.
+            const float size = std::max({hi.x - lo.x, hi.y - lo.y, 1.0f}) * 1.02f;
+            const float texel = size / static_cast<float>(kShadowMapSize);
+            const float cx = std::round((lo.x + hi.x) * 0.5f / texel) * texel;
+            const float cy = std::round((lo.y + hi.y) * 0.5f / texel) * texel;
+            const float z0 = lo.z - 1.0f, z1 = hi.z + 1.0f;
+            const float half = size * 0.5f;
+            math::Mat4 m;
+            const Vec3 rows[3] = {right * (1.0f / half), up * (1.0f / half), forward * (1.0f / (z1 - z0))};
+            const float offsets[3] = {-cx / half, -cy / half, -z0 / (z1 - z0)};
+            for (int r = 0; r < 3; ++r) {
+                m.at(0, static_cast<std::size_t>(r)) = rows[r].x;
+                m.at(1, static_cast<std::size_t>(r)) = rows[r].y;
+                m.at(2, static_cast<std::size_t>(r)) = rows[r].z;
+                m.at(3, static_cast<std::size_t>(r)) = offsets[r];
+            }
+            std::memcpy(u.light_view_proj, m.m, sizeof(u.light_view_proj));
+            u.shadow_params[0] = 1.0f / static_cast<float>(kShadowMapSize);
+            u.shadow_params[1] = texel;
+            u.shadow_params[2] = texel * 0.5f / (z1 - z0);
+            sun_shadows_ = true;
+        }
+        set4(u.sun_direction, to_sun, sun_shadows_ ? 1.0f : 0.0f);
+    }
+    stats.sun_shadows = sun_shadows_;
+    std::memcpy(frames_[frame_index_].uniforms.mapped, &u, sizeof(u));
+}
+
+namespace {
+
+PushConstants push_for(const Draw& d, const RenderOptions& options) {
+    PushConstants pc{};
+    std::memcpy(pc.model, d.model.m, sizeof(pc.model));
+    const MeshInstance& m = d.instance;
+    set4(pc.base_color, m.color, d.entity == options.highlight ? 1.0f : 0.0f);
+    set4(pc.emissive_rough, m.emissive, m.roughness);
+    pc.material[0] = m.texture;
+    pc.material[1] = m.metallic_roughness_texture;
+    pc.material[2] = m.normal_texture;
+    std::memcpy(&pc.material[3], &m.metallic, sizeof(float));
+    return pc;
+}
+
+}  // namespace
+
+void VulkanRenderer::record_shadows(VkCommandBuffer cmd, FrameStats& stats) {
+    constexpr VkPipelineStageFlags2 kDepthStages =
+        VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+    // The previous frame's scene pass may still be sampling the map.
+    image_barrier(cmd, shadow_map_.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+                  VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_NONE,
+                  kDepthStages, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+    VkRenderingAttachmentInfo depth_att{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+    depth_att.imageView = shadow_map_.view;
+    depth_att.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+    depth_att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depth_att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depth_att.clearValue.depthStencil = {1.0f, 0};
+    VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO};
+    rendering.renderArea = {{0, 0}, {kShadowMapSize, kShadowMapSize}};
+    rendering.layerCount = 1;
+    rendering.pDepthAttachment = &depth_att;
+    vkCmdBeginRendering(cmd, &rendering);
+    if (sun_shadows_) {
+        const VkViewport viewport{0, 0, static_cast<float>(kShadowMapSize), static_cast<float>(kShadowMapSize), 0, 1};
+        const VkRect2D scissor{{0, 0}, {kShadowMapSize, kShadowMapSize}};
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline_);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &frames_[frame_index_].set, 0,
+                                nullptr);
+        MeshId bound = static_cast<MeshId>(-1);
+        const RenderOptions no_highlight;
+        for (const Draw& d : draws_) {
+            const GpuMesh& mesh = meshes_[d.instance.mesh];
+            if (d.instance.mesh != bound) {
+                const VkDeviceSize offset = 0;
+                vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertices.buffer, &offset);
+                vkCmdBindIndexBuffer(cmd, mesh.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+                bound = d.instance.mesh;
+            }
+            const PushConstants pc = push_for(d, no_highlight);
+            vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
+            vkCmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0);
+            ++stats.shadow_draws;
+        }
+    }
+    vkCmdEndRendering(cmd);
+    image_barrier(cmd, shadow_map_.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                  VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, kDepthStages, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+}
+
 void VulkanRenderer::record_scene(VkCommandBuffer cmd, VkImage color, VkImageView color_view, VkExtent2D extent,
-                                  world::World& world, const Camera& camera, const RenderOptions& options,
-                                  FrameStats& stats) {
+                                  const RenderOptions& options, FrameStats& stats) {
     constexpr VkPipelineStageFlags2 kDepthStages =
         VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
     // The previous frame may still be writing (or, in UI mode, sampling) this
@@ -1230,64 +1573,33 @@ void VulkanRenderer::record_scene(VkCommandBuffer cmd, VkImage color, VkImageVie
     const VkRect2D scissor{{0, 0}, extent};
     vkCmdSetViewport(cmd, 0, 1, &viewport);
     vkCmdSetScissor(cmd, 0, 1, &scissor);
-    const math::Mat4 view_proj =
-        view_projection(camera, static_cast<float>(extent.width) / static_cast<float>(extent.height));
     constexpr VkShaderStageFlags kPushStages = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &frames_[frame_index_].set, 0, nullptr);
     MeshId bound = static_cast<MeshId>(-1);
-    TextureId bound_texture = static_cast<TextureId>(-1);
-    world.each<const world::GlobalTransform, const MeshInstance>(
-        [&](world::Entity entity, const world::GlobalTransform& g, const MeshInstance& inst) {
-            if (inst.mesh >= meshes_.size()) return;
-            const GpuMesh& mesh = meshes_[inst.mesh];
-            if (inst.mesh != bound) {
-                const VkDeviceSize offset = 0;
-                vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertices.buffer, &offset);
-                vkCmdBindIndexBuffer(cmd, mesh.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-                bound = inst.mesh;
-            }
-            const TextureId tex = inst.texture < textures_.size() ? inst.texture : kWhiteTexture;
-            if (tex != bound_texture) {
-                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &textures_[tex].set, 0, nullptr);
-                bound_texture = tex;
-            }
-            PushConstants pc{};
-            const math::Mat4 mvp = view_proj * g.matrix;
-            std::memcpy(pc.mvp, mvp.m, sizeof(pc.mvp));
-            // Normal matrix = inverse-transpose of the upper 3x3, up to a
-            // positive scale the shader normalises away: the columns are
-            // the cross products of the other two columns.
-            const math::Vec3 c0{g.matrix.m[0], g.matrix.m[1], g.matrix.m[2]};
-            const math::Vec3 c1{g.matrix.m[4], g.matrix.m[5], g.matrix.m[6]};
-            const math::Vec3 c2{g.matrix.m[8], g.matrix.m[9], g.matrix.m[10]};
-            const float sign = math::dot(c0, math::cross(c1, c2)) < 0 ? -1.0f : 1.0f;
-            const math::Vec3 n0 = math::cross(c1, c2) * sign;
-            const math::Vec3 n1 = math::cross(c2, c0) * sign;
-            const math::Vec3 n2 = math::cross(c0, c1) * sign;
-            const float n[3][4] = {{n0.x, n0.y, n0.z, 0}, {n1.x, n1.y, n1.z, 0}, {n2.x, n2.y, n2.z, 0}};
-            std::memcpy(pc.normal0, n[0], sizeof(pc.normal0));
-            std::memcpy(pc.normal1, n[1], sizeof(pc.normal1));
-            std::memcpy(pc.normal2, n[2], sizeof(pc.normal2));
-            pc.color[0] = inst.color.x;
-            pc.color[1] = inst.color.y;
-            pc.color[2] = inst.color.z;
-            pc.color[3] = entity == options.highlight ? 1.0f : 0.0f;
-            vkCmdPushConstants(cmd, layout_, kPushStages, 0, sizeof(pc), &pc);
-            vkCmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0);
-            ++stats.draws;
-        });
+    const auto texture_or_white = [&](TextureId t) { return t < textures_.size() ? t : kWhiteTexture; };
+    for (const Draw& d : draws_) {
+        const GpuMesh& mesh = meshes_[d.instance.mesh];
+        if (d.instance.mesh != bound) {
+            const VkDeviceSize offset = 0;
+            vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertices.buffer, &offset);
+            vkCmdBindIndexBuffer(cmd, mesh.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+            bound = d.instance.mesh;
+        }
+        PushConstants pc = push_for(d, options);
+        for (int i = 0; i < 3; ++i) pc.material[i] = texture_or_white(pc.material[i]);
+        vkCmdPushConstants(cmd, layout_, kPushStages, 0, sizeof(pc), &pc);
+        vkCmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0);
+        ++stats.draws;
+    }
 
     // Grid last: it is blended over opaque geometry and the sky.
     if (options.grid) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, grid_pipeline_);
         const VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(cmd, 0, 1, &grid_.buffer, &offset);
-        PushConstants pc{};
-        std::memcpy(pc.mvp, view_proj.m, sizeof(pc.mvp));
-        pc.normal0[0] = camera.position.x;
-        pc.normal0[1] = camera.position.y;
-        pc.normal0[2] = camera.position.z;
+        const PushConstants pc{};
         vkCmdPushConstants(cmd, layout_, kPushStages, 0, sizeof(pc), &pc);
         vkCmdDraw(cmd, 6, 1, 0, 0);
     }
@@ -1311,7 +1623,9 @@ Result<FrameStats> VulkanRenderer::render(world::World& world, const Camera& cam
         AETHER_VK_TRY(vkResetFences(device_, 1, &frame.fence));
         vkResetCommandBuffer(frame.cmd, 0);
         vkBeginCommandBuffer(frame.cmd, &begin);
-        record_scene(frame.cmd, offscreen_.image, offscreen_.view, extent_, world, camera, options, stats);
+        prepare_frame(world, camera, options, extent_, stats);
+        record_shadows(frame.cmd, stats);
+        record_scene(frame.cmd, offscreen_.image, offscreen_.view, extent_, options, stats);
         image_barrier(frame.cmd, offscreen_.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                       VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT,
@@ -1370,11 +1684,14 @@ Result<FrameStats> VulkanRenderer::render(world::World& world, const Camera& cam
     vkResetCommandBuffer(frame.cmd, 0);
     vkBeginCommandBuffer(frame.cmd, &begin);
 
+    const VkExtent2D scene_extent = ui_ ? viewport_extent_ : extent_;
+    prepare_frame(world, camera, options, scene_extent, stats);
+    record_shadows(frame.cmd, stats);
     if (!ui_) {
-        record_scene(frame.cmd, swap_images_[image], swap_views_[image], extent_, world, camera, options, stats);
+        record_scene(frame.cmd, swap_images_[image], swap_views_[image], extent_, options, stats);
     } else {
         // 1) Scene into the viewport texture, then make it sampleable.
-        record_scene(frame.cmd, viewport_.image, viewport_.view, viewport_extent_, world, camera, options, stats);
+        record_scene(frame.cmd, viewport_.image, viewport_.view, viewport_extent_, options, stats);
         image_barrier(frame.cmd, viewport_.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                       VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
@@ -1480,13 +1797,17 @@ VulkanRenderer::~VulkanRenderer() {
             if (t.image) vkDestroyImage(device_, t.image, nullptr);
             if (t.memory) vkFreeMemory(device_, t.memory, nullptr);
         }
-        if (material_pool_) vkDestroyDescriptorPool(device_, material_pool_, nullptr);
+        destroy_image(shadow_map_);
+        for (Frame& f : frames_) destroy_buffer(f.uniforms);
+        if (descriptor_pool_) vkDestroyDescriptorPool(device_, descriptor_pool_, nullptr);
         if (texture_sampler_) vkDestroySampler(device_, texture_sampler_, nullptr);
-        if (material_layout_) vkDestroyDescriptorSetLayout(device_, material_layout_, nullptr);
+        if (shadow_sampler_) vkDestroySampler(device_, shadow_sampler_, nullptr);
+        if (set_layout_) vkDestroyDescriptorSetLayout(device_, set_layout_, nullptr);
         destroy_targets();
         if (swapchain_) vkDestroySwapchainKHR(device_, swapchain_, nullptr);
         if (pipeline_) vkDestroyPipeline(device_, pipeline_, nullptr);
         if (grid_pipeline_) vkDestroyPipeline(device_, grid_pipeline_, nullptr);
+        if (shadow_pipeline_) vkDestroyPipeline(device_, shadow_pipeline_, nullptr);
         if (layout_) vkDestroyPipelineLayout(device_, layout_, nullptr);
         for (Frame& f : frames_) {
             if (f.fence) vkDestroyFence(device_, f.fence, nullptr);
