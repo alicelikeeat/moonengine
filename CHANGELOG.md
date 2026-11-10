@@ -4,6 +4,22 @@ All notable changes are recorded here. The format follows [Keep a Changelog](htt
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-10
+
+Sky, sky reflections and cascaded shadows.
+
+### Added
+- `Environment` component: sky gradient (zenith, horizon, ground), brightness, exposure, shadows, sky visibility. Saved in levels; the first one in the world is used. ADR 0014.
+- Sky background pass with the sun's disc and glow.
+- Image-based lighting from the sky, baked on the CPU when the Environment changes: spherical-harmonic diffuse irradiance and a GGX-prefiltered cube map for reflections (`bake_sky`).
+- Cascaded sun shadows: 3 cascades of 2048² over 80 m, sphere-fitted and texel-snapped, per-cascade caster culling, fade-out at the end.
+- Editor: World Settings edits the level's Environment actor with undo (zenith, horizon, ground, brightness, show sky, exposure, shadows); *Place Actors > Sky & Environment*; the editor shows a default sky for levels without one.
+- Demo level, runtime demo and `model_garden` have a visible sky.
+- Tests: far-cascade shadows, sky background and lighting, mirror reflection with re-bake, Environment serialisation, half floats, sky bake. 147 tests.
+
+### Changed
+- `Environment` moved from `RenderOptions` settings to a component in `light.hpp` (`RenderOptions::environment` remains as the fallback); its `horizon_color` is new and the default zenith colour is bluer.
+
 ## [0.5.0] - 2026-11-09
 
 Physically based materials, lights and shadows.

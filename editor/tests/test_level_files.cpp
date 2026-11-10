@@ -40,8 +40,8 @@ AETHER_TEST(committed_demo_level_loads_cleanly) {
     auto report = world::load_level_file(kSample, w, reg);
     REQUIRE(report.has_value());
     CHECK(report.value().warnings.empty());
-    // sun, sun glow, system, floor, sun light, 6 planets with orbits, 12 moons with orbits
-    CHECK_EQ(w.entity_count(), std::size_t{41});
+    // sun, sun glow, system, floor, sun light, environment, 6 planets with orbits, 12 moons with orbits
+    CHECK_EQ(w.entity_count(), std::size_t{42});
     CHECK(world::hierarchy::validate(w).empty());
 }
 

@@ -52,7 +52,7 @@ constexpr const char* kContent = "Content Browser";
 constexpr const char* kWorldSettings = "World Settings";
 constexpr const char* kAssetDrag = "AETHER_ASSET";
 constexpr const char* kOutlinerDrag = "AETHER_ENTITY";
-constexpr const char* kGenerator = "Aether Editor 0.5.0";
+constexpr const char* kGenerator = "Aether Editor 0.6.0";
 
 namespace fs = std::filesystem;
 
@@ -143,7 +143,12 @@ struct EditorApp::Impl {
 
     bool show_outliner = true, show_details = true, show_place = true, show_log = true, show_stats = true;
     bool show_content = true, show_world = true;
-    render::Environment environment;  // World Settings (editor session only for now)
+    // Used while the level has no Environment actor: the editor's own sky.
+    render::Environment environment = [] {
+        render::Environment env;
+        env.sky_visible = true;
+        return env;
+    }();
 
     // Content browser.
     std::vector<std::string> content_models;
@@ -187,6 +192,8 @@ struct EditorApp::Impl {
         (void)world->component_id<world::Name>();
         (void)world->component_id<render::MeshInstance>();
         (void)world->component_id<world::UnknownComponents>();
+        (void)world->component_id<render::Light>();
+        (void)world->component_id<render::Environment>();
     }
     void reset_world() { install_world(std::make_unique<world::World>()); }
 
@@ -499,7 +506,25 @@ struct EditorApp::Impl {
     const char* actor_type(world::Entity e) const {
         if (const auto* light = world->get<render::Light>(e))
             return light->type == render::LightType::Directional ? "Directional Light" : "Point Light";
+        if (world->has<render::Environment>(e)) return "Environment";
         return world->has<render::MeshInstance>(e) ? "Static Mesh" : "Empty";
+    }
+
+    // The level's Environment actor (the first one, as the renderer uses), or null.
+    world::Entity environment_entity() const {
+        world::Entity found;
+        world->each<const render::Environment>([&](world::Entity e, const render::Environment&) {
+            if (found.is_null()) found = e;
+        });
+        return found;
+    }
+
+    void add_environment() {
+        if (!can_record()) return;
+        const world::Entity e = world->create();
+        world->add<world::Name>(e, world::Name{"Environment"});
+        world->add<render::Environment>(e, environment);
+        record(make_create_command("Add Environment", capture_subtree(*world, e)));
     }
 
     static render::Light default_light(render::LightType type) {
@@ -1430,6 +1455,22 @@ struct EditorApp::Impl {
             }
         }
 
+        if (world->has<render::Environment>(e)) {
+            bool remove = false;
+            if (component_header("Environment", true, remove) && !remove) {
+                ImGui::TextWrapped("Sky, sky light, exposure and shadows for the whole level.");
+                if (ImGui::Button("Edit in World Settings")) {
+                    show_world = true;
+                    ImGui::SetWindowFocus(kWorldSettings);
+                }
+            }
+            if (remove) {
+                const EntityState before = capture(*world, e);
+                world->remove<render::Environment>(e);
+                record(make_edit_command("Remove Environment", before, capture(*world, e)));
+            }
+        }
+
         // Spin
         if (world->has<Spin>(e)) {
             bool remove = false;
@@ -1470,7 +1511,7 @@ struct EditorApp::Impl {
         for (const world::ComponentId id : world->components_of(e)) {
             const auto& info = world->component_info(id);
             if (info.name == "Name" || info.name == "Transform" || info.name == "MeshInstance" || info.name == "Spin" ||
-                info.name == "Light" ||
+                info.name == "Light" || info.name == "Environment" ||
                 info.name == "GlobalTransform")
                 continue;
             others.push_back(info.name);
@@ -1514,29 +1555,55 @@ struct EditorApp::Impl {
             ImGui::End();
             return;
         }
-        render::Environment& env = environment;
-        const auto row = [](const char* label) {
-            ImGui::AlignTextToFramePadding();
-            ImGui::Text("%s", label);
-            ImGui::SameLine(110);
-            ImGui::SetNextItemWidth(-1);
-        };
-        ImGui::SeparatorText("Sky Light");
-        row("Sky");
-        ImGui::ColorEdit3("##sky", &env.sky_color.x);
-        row("Ground");
-        ImGui::ColorEdit3("##ground", &env.ground_color.x);
-        row("Intensity");
-        ImGui::SliderFloat("##ambient", &env.ambient_intensity, 0.0f, 4.0f, "%.2f");
-        ImGui::SeparatorText("Camera");
-        row("Exposure");
-        ImGui::SliderFloat("##exposure", &env.exposure, 0.1f, 8.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
-        ImGui::SeparatorText("Shadows");
-        row("Sun shadows");
-        ImGui::Checkbox("##shadows", &env.shadows);
-        ImGui::Spacing();
-        if (ImGui::Button("Reset to defaults")) env = render::Environment{};
-        ImGui::TextDisabled("Applies to this editor session; not saved in the level yet.");
+        const world::Entity e = environment_entity();
+        if (e.is_null()) {
+            ImGui::TextWrapped("This level has no Environment actor, so the editor's default sky is shown and nothing "
+                               "here is saved with the level.");
+            if (ImGui::Button("Add Sky & Environment to the level")) add_environment();
+        } else {
+            render::Environment env = *world->get<render::Environment>(e);
+            const auto row = [](const char* label) {
+                ImGui::AlignTextToFramePadding();
+                ImGui::Text("%s", label);
+                ImGui::SameLine(110);
+                ImGui::SetNextItemWidth(-1);
+            };
+            // Sliders and colour pickers: one undo step per drag. Checkboxes and buttons: at once.
+            const auto dragged = [&](bool changed, const char* label) {
+                if (changed) world->add<render::Environment>(e, env);
+                track_edit(e, label);
+            };
+            const auto toggled = [&](bool changed, const char* label) {
+                if (!changed) return;
+                const EntityState before = capture(*world, e);
+                world->add<render::Environment>(e, env);
+                record(make_edit_command(label, before, capture(*world, e)));
+            };
+            ImGui::SeparatorText("Sky");
+            row("Zenith");
+            dragged(ImGui::ColorEdit3("##sky", &env.sky_color.x), "Change sky colour");
+            row("Horizon");
+            dragged(ImGui::ColorEdit3("##horizon", &env.horizon_color.x), "Change horizon colour");
+            row("Ground");
+            dragged(ImGui::ColorEdit3("##ground", &env.ground_color.x), "Change ground colour");
+            row("Brightness");
+            dragged(ImGui::SliderFloat("##ambient", &env.ambient_intensity, 0.0f, 4.0f, "%.2f"), "Change sky brightness");
+            row("Show sky");
+            toggled(ImGui::Checkbox("##skyvisible", &env.sky_visible), "Toggle sky");
+            ImGui::SeparatorText("Camera");
+            row("Exposure");
+            dragged(ImGui::SliderFloat("##exposure", &env.exposure, 0.1f, 8.0f, "%.2f", ImGuiSliderFlags_Logarithmic),
+                    "Change exposure");
+            ImGui::SeparatorText("Shadows");
+            row("Sun shadows");
+            toggled(ImGui::Checkbox("##shadows", &env.shadows), "Toggle sun shadows");
+            ImGui::Spacing();
+            if (ImGui::Button("Reset to defaults")) {
+                env = environment;
+                toggled(true, "Reset environment");
+            }
+            ImGui::TextDisabled("Saved with the level (the \"%s\" actor).", display_name(*world, e).c_str());
+        }
         if (world->count<render::Light>() == 0)
             ImGui::TextWrapped("This level has no lights, so a default sun is used. Add one from Place Actors > Lights.");
         ImGui::End();
@@ -1563,6 +1630,14 @@ struct EditorApp::Impl {
             ImGui::SetTooltip("Sunlight: parallel rays along the light's forward axis; casts shadows");
         if (ImGui::Button("Point Light", ImVec2(w, 0))) spawn_light(render::LightType::Point);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("Light bulb: shines in all directions up to its range");
+        if (ImGui::Button("Sky & Environment", ImVec2(w, 0))) {
+            if (environment_entity().is_null()) add_environment();
+            select(environment_entity());
+            show_world = true;
+            ImGui::SetWindowFocus(kWorldSettings);
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            ImGui::SetTooltip("Sky colours, sky light, exposure and shadows; saved with the level. Edit in World Settings");
         ImGui::Spacing();
         ImGui::TextDisabled("Levels");
         if (ImGui::Button("Open Demo Level", ImVec2(w, 0))) request(Pending::Demo);

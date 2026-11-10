@@ -61,6 +61,20 @@
               },
               "additionalProperties": false
             },
+            "Environment": {
+              "type": "object",
+              "description": "Sky and image-wide settings; the first entity with one is used.",
+              "properties": {
+                "sky": { "$ref": "#/$defs/vec3", "description": "Zenith colour, linear RGB." },
+                "horizon": { "$ref": "#/$defs/vec3" },
+                "ground": { "$ref": "#/$defs/vec3", "description": "Colour below the horizon." },
+                "intensity": { "type": "number", "minimum": 0, "description": "Brightness of the sky as a light and as a background." },
+                "exposure": { "type": "number", "exclusiveMinimum": 0 },
+                "shadows": { "type": "boolean", "description": "Sun shadows on/off." },
+                "sky_visible": { "type": "boolean", "description": "Draw the sky behind the scene." }
+              },
+              "additionalProperties": false
+            },
             "Light": {
               "type": "object",
               "properties": {

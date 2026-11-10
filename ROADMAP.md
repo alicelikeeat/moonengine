@@ -43,7 +43,8 @@ Render
 - [x] Release workflow: tagged builds published to GitHub Releases with checksums (v0.1.0)
 - [ ] Device-local memory with staging uploads; memory allocator
 - [x] Metallic-roughness PBR, normal maps, emission, ACES tone mapping; directional and point lights; sun shadow map (v0.5.0)
-- [ ] Render graph; clustered lighting; image-based lighting; cascaded and point-light shadows
+- [x] Sky background, image-based lighting from the sky (SH irradiance + prefiltered cube), cascaded sun shadows (v0.6.0)
+- [ ] Render graph; clustered lighting; HDR image skies and scene reflections; point-light shadows
 
 ## M2 — Editable 3D scenes · 🚧 Started
 
@@ -54,6 +55,7 @@ Render
 - [x] Textured meshes with mipmaps; levels reference models by content path and load them on demand (v0.4.0)
 - [ ] Content-hashed asset database with stable asset IDs and import cache; thumbnails
 - [x] Lights as actors (place, pick, edit, save); material editing in Details; World Settings (v0.5.0)
+- [x] Environment as a level actor: sky, exposure and shadow settings saved with the level and undoable (v0.6.0)
 - [ ] Shared material assets and a material editor; reflection-driven inspectors; multi-selection
 
 ## M3 — AI-native workflow

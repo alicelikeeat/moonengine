@@ -88,6 +88,11 @@ void build_demo_scene(world::World& w, render::MeshId cube) {
     day.color = {1.0f, 0.96f, 0.9f};
     day.intensity = 2.5f;
     w.add<render::Light>(daylight, day);
+
+    const world::Entity environment = make(w, "Environment", {0, 0, 0}, 1.0f);
+    render::Environment env;
+    env.sky_visible = true;
+    w.add<render::Environment>(environment, env);
     world::propagate_transforms(w);
 }
 
