@@ -5,6 +5,7 @@
 #include "aether/gameplay/spin.hpp"
 #include "aether/render/light.hpp"
 #include "aether/render/mesh_registry.hpp"
+#include "aether/simulation/physics.hpp"
 #include "aether/world/hierarchy.hpp"
 #include "aether/world/name.hpp"
 
@@ -80,6 +81,7 @@ void build_demo_scene(world::World& w, render::MeshId cube) {
     render::MeshInstance floor_mesh{cube, {0.09f, 0.095f, 0.105f}};
     floor_mesh.roughness = 0.9f;
     w.add<render::MeshInstance>(floor, floor_mesh);
+    w.add<simulation::Collider>(floor);  // static ground for physics actors dropped into the level
 
     // Daylight from above, casting shadows onto the floor.
     const world::Entity daylight = make(w, "Sun Light", {6, 12, 6}, 1.0f, render::rotation_toward({-0.45f, -1.0f, -0.3f}));
@@ -109,6 +111,7 @@ Result<void> save_demo_level(const std::filesystem::path& path) {
 void register_level_components(world::SerializerRegistry& registry, const render::MeshRegistry& meshes) {
     world::register_core_components(registry);
     render::register_components(registry, meshes);
+    simulation::register_components(registry);
     gameplay::register_components(registry);
 }
 

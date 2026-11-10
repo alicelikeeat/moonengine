@@ -12,7 +12,9 @@
 
 #include "aether/gameplay/spin.hpp"
 #include "aether/foundation/uuid.hpp"
+#include "aether/render/light.hpp"
 #include "aether/render/mesh.hpp"
+#include "aether/simulation/physics.hpp"
 #include "aether/world/hierarchy.hpp"
 #include "aether/world/name.hpp"
 #include "aether/world/serialization.hpp"
@@ -30,9 +32,17 @@ struct EntityState {
     std::optional<world::Transform> transform;
     std::optional<render::MeshInstance> mesh;
     std::optional<Spin> spin;
+    std::optional<render::Light> light;
+    std::optional<render::Environment> environment;
+    std::optional<simulation::RigidBody> rigid_body;
+    std::optional<simulation::Collider> collider;
     std::optional<world::UnknownComponents> unknown;  // data from newer versions or plug-ins
 };
 
+// Every component type the editor can show or edit must be in EntityState
+// (capture and apply_components in snapshot.cpp): anything missing is lost
+// on undo and when Play mode stops.
+//
 // State of one entity (its components and parent link, not its children).
 [[nodiscard]] EntityState capture(world::World& world, world::Entity e);
 
