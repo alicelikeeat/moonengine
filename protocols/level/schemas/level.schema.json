@@ -75,6 +75,34 @@
               },
               "additionalProperties": false
             },
+            "RigidBody": {
+              "type": "object",
+              "description": "How the entity moves in the physics simulation. Needs a Collider.",
+              "properties": {
+                "type": { "enum": ["static", "dynamic", "kinematic"] },
+                "mass": { "type": "number", "exclusiveMinimum": 0, "description": "Kilograms (dynamic bodies)." },
+                "friction": { "type": "number", "minimum": 0 },
+                "restitution": { "type": "number", "minimum": 0, "maximum": 1, "description": "Bounciness." },
+                "linear_damping": { "type": "number", "minimum": 0 },
+                "angular_damping": { "type": "number", "minimum": 0 },
+                "gravity_scale": { "type": "number" },
+                "linear_velocity": { "$ref": "#/$defs/vec3", "description": "Initial velocity, metres per second, world space." },
+                "angular_velocity": { "$ref": "#/$defs/vec3", "description": "Radians per second." }
+              },
+              "additionalProperties": false
+            },
+            "Collider": {
+              "type": "object",
+              "description": "Collision shape in the entity's local space, scaled with it. Without a RigidBody it is static.",
+              "properties": {
+                "shape": { "enum": ["box", "sphere", "capsule"] },
+                "half_extents": { "$ref": "#/$defs/vec3", "description": "Box." },
+                "radius": { "type": "number", "exclusiveMinimum": 0, "description": "Sphere and capsule." },
+                "half_height": { "type": "number", "exclusiveMinimum": 0, "description": "Capsule: half the cylinder part, along Y." },
+                "offset": { "$ref": "#/$defs/vec3" }
+              },
+              "additionalProperties": false
+            },
             "Light": {
               "type": "object",
               "properties": {

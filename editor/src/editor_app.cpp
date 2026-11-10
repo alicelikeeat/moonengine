@@ -29,6 +29,7 @@
 #include "aether/render/light.hpp"
 #include "aether/render/mesh_registry.hpp"
 #include "aether/render/model_library.hpp"
+#include "aether/simulation/physics.hpp"
 
 namespace aether::editor {
 
@@ -52,7 +53,7 @@ constexpr const char* kContent = "Content Browser";
 constexpr const char* kWorldSettings = "World Settings";
 constexpr const char* kAssetDrag = "AETHER_ASSET";
 constexpr const char* kOutlinerDrag = "AETHER_ENTITY";
-constexpr const char* kGenerator = "Aether Editor 0.6.0";
+constexpr const char* kGenerator = "Aether Editor 0.7.0";
 
 namespace fs = std::filesystem;
 
@@ -134,6 +135,10 @@ struct EditorApp::Impl {
 
     enum class PlayState { Editing, Playing, Paused } play = PlayState::Editing;
     std::vector<EntityState> play_backup;
+    // Physics exists only while playing; Stop restores the level.
+    std::unique_ptr<simulation::PhysicsWorld> physics;
+    float physics_accumulator = 0.0f;
+    simulation::StepStats physics_stats;
 
     ImGuizmo::OPERATION gizmo_op = ImGuizmo::TRANSLATE;
     ImGuizmo::MODE gizmo_mode = ImGuizmo::WORLD;
@@ -194,6 +199,8 @@ struct EditorApp::Impl {
         (void)world->component_id<world::UnknownComponents>();
         (void)world->component_id<render::Light>();
         (void)world->component_id<render::Environment>();
+        (void)world->component_id<simulation::RigidBody>();
+        (void)world->component_id<simulation::Collider>();
     }
     void reset_world() { install_world(std::make_unique<world::World>()); }
 
@@ -491,16 +498,54 @@ struct EditorApp::Impl {
         world->add<world::Transform>(e, t);
     }
 
-    world::Entity spawn(const char* name, bool mesh, bool spin, Vec3 color = {0.75f, 0.75f, 0.78f}) {
+    world::Entity spawn(const char* name, bool mesh, bool spin, Vec3 color = {0.75f, 0.75f, 0.78f},
+                        std::optional<render::MeshId> which = std::nullopt) {
         const world::Entity e = world->create();
         world->add<world::Name>(e, world::Name{name});
         world->add<world::Transform>(e, world::Transform{cam.focus});
-        if (mesh) world->add<render::MeshInstance>(e, render::MeshInstance{cube, color});
+        if (mesh) world->add<render::MeshInstance>(e, render::MeshInstance{which.value_or(cube), color});
         if (spin) world->add<Spin>(e, Spin{{0, 1, 0}, 1.0f});
         world::propagate_transforms(*world);
         record(make_create_command(std::string("Create ") + name, capture_subtree(*world, e)));
         select(e);
         return e;
+    }
+
+    // A collider that encloses the entity's mesh (a unit box without one).
+    simulation::Collider fitted_collider(world::Entity e, simulation::ShapeType shape) const {
+        simulation::Collider c;
+        c.shape = shape;
+        const auto* mesh = world->get<render::MeshInstance>(e);
+        if (!mesh || mesh->mesh >= library->bounds().size()) return c;
+        const render::Aabb& b = library->bounds()[mesh->mesh];
+        const Vec3 half = (b.max - b.min) * 0.5f;
+        c.offset = (b.max + b.min) * 0.5f;
+        c.half_extents = {std::max(half.x, 0.01f), std::max(half.y, 0.01f), std::max(half.z, 0.01f)};
+        c.radius = std::max({half.x, half.y, half.z, 0.01f});
+        if (shape == simulation::ShapeType::Capsule) {
+            c.radius = std::max({half.x, half.z, 0.01f});
+            c.half_height = std::max(half.y - c.radius, 0.01f);
+        }
+        return c;
+    }
+
+    // A mesh that falls and collides when the level is played.
+    void spawn_physics(bool sphere) {
+        if (!can_record()) return;
+        const world::Entity e = world->create();
+        world->add<world::Name>(e, world::Name{sphere ? "Physics Sphere" : "Physics Cube"});
+        world->add<world::Transform>(e, world::Transform{cam.focus + Vec3{0, 3, 0}});
+        render::MeshInstance mesh{sphere ? library->sphere() : cube, sphere ? Vec3{0.9f, 0.45f, 0.2f} : Vec3{0.3f, 0.6f, 0.9f}};
+        mesh.roughness = 0.4f;
+        world->add<render::MeshInstance>(e, mesh);
+        world->add<simulation::Collider>(e, fitted_collider(e, sphere ? simulation::ShapeType::Sphere : simulation::ShapeType::Box));
+        simulation::RigidBody body;
+        if (sphere) body.restitution = 0.5f;
+        world->add<simulation::RigidBody>(e, body);
+        world::propagate_transforms(*world);
+        record(make_create_command(std::string("Create ") + (sphere ? "Physics Sphere" : "Physics Cube"),
+                                   capture_subtree(*world, e)));
+        select(e);
     }
 
     const char* actor_type(world::Entity e) const {
@@ -642,6 +687,12 @@ struct EditorApp::Impl {
         if (play == PlayState::Editing) {
             play_backup = capture_world(*world);
             play = PlayState::Playing;
+            if (auto created = simulation::PhysicsWorld::create({.logger = &logger})) {
+                physics = std::move(created).value();
+            } else {
+                AETHER_LOG(logger, LogLevel::Error, "editor", "physics is unavailable: {}", created.error().message);
+            }
+            physics_accumulator = 0.0f;
             AETHER_LOG(logger, LogLevel::Info, "editor", "play");
         } else {
             play = play == PlayState::Playing ? PlayState::Paused : PlayState::Playing;
@@ -651,6 +702,8 @@ struct EditorApp::Impl {
     void stop() {
         if (play == PlayState::Editing) return;
         play = PlayState::Editing;
+        physics.reset();
+        physics_stats = {};
         reset_world();
         restore(*world, play_backup);
         world::propagate_transforms(*world);
@@ -661,7 +714,16 @@ struct EditorApp::Impl {
     // ---- Frame ----------------------------------------------------------
 
     void update(float dt) {
-        if (play == PlayState::Playing) schedule.run(*world, nullptr, dt);
+        if (play == PlayState::Playing) {
+            schedule.run(*world, nullptr, dt);
+            if (physics) {
+                // Fixed 60 Hz steps; a long frame simulates at most four of them.
+                constexpr float kStep = 1.0f / 60.0f;
+                physics_accumulator = std::min(physics_accumulator + dt, 4.0f * kStep);
+                for (; physics_accumulator >= kStep; physics_accumulator -= kStep)
+                    physics_stats = physics->step(*world, kStep);
+            }
+        }
         world::propagate_transforms(*world);
         frame_ms[frame_ms_pos++ % frame_ms.size()] = dt * 1000.0f;
     }
@@ -1059,6 +1121,50 @@ struct EditorApp::Impl {
                 dl->AddCircle(icon.pos, 9.5f, outline, 0, chosen ? 2.0f : 1.0f);
             }
         }
+        // Collider of the selected actor, as a wireframe.
+        if (const world::Entity chosen = selection(); !chosen.is_null() && world->has<simulation::Collider>(chosen)) {
+            const simulation::Collider& c = *world->get<simulation::Collider>(chosen);
+            const Mat4 m = world_matrix(chosen);
+            const ImU32 wire = IM_COL32(90, 230, 120, 230);
+            const auto line = [&](Vec3 a, Vec3 b) {
+                ImVec2 pa, pb;
+                if (to_screen(m.transform_point(a + c.offset), pa) && to_screen(m.transform_point(b + c.offset), pb))
+                    dl->AddLine(pa, pb, wire, 1.5f);
+            };
+            // Circle of `radius` around `centre` in the plane spanned by u and v.
+            const auto circle = [&](Vec3 centre, Vec3 u, Vec3 v, float radius, float from = 0.0f, float to = 2.0f * math::kPi) {
+                constexpr int kSegments = 32;
+                for (int k = 0; k < kSegments; ++k) {
+                    const float a0 = from + (to - from) * static_cast<float>(k) / kSegments;
+                    const float a1 = from + (to - from) * static_cast<float>(k + 1) / kSegments;
+                    line(centre + (u * std::cos(a0) + v * std::sin(a0)) * radius, centre + (u * std::cos(a1) + v * std::sin(a1)) * radius);
+                }
+            };
+            const Vec3 x{1, 0, 0}, y{0, 1, 0}, z{0, 0, 1};
+            if (c.shape == simulation::ShapeType::Box) {
+                const Vec3 h = c.half_extents;
+                for (int k = 0; k < 4; ++k) {
+                    const float a = (k & 1) ? 1.0f : -1.0f, b = (k & 2) ? 1.0f : -1.0f;
+                    line({-h.x, a * h.y, b * h.z}, {h.x, a * h.y, b * h.z});
+                    line({a * h.x, -h.y, b * h.z}, {a * h.x, h.y, b * h.z});
+                    line({a * h.x, b * h.y, -h.z}, {a * h.x, b * h.y, h.z});
+                }
+            } else if (c.shape == simulation::ShapeType::Sphere) {
+                circle({}, x, y, c.radius);
+                circle({}, y, z, c.radius);
+                circle({}, x, z, c.radius);
+            } else {
+                const Vec3 top{0, c.half_height, 0}, bottom{0, -c.half_height, 0};
+                circle(top, x, z, c.radius);
+                circle(bottom, x, z, c.radius);
+                for (const Vec3 side : {x, z}) {
+                    line(top + side * c.radius, bottom + side * c.radius);
+                    line(top - side * c.radius, bottom - side * c.radius);
+                    circle(top, side, y, c.radius, 0.0f, math::kPi);
+                    circle(bottom, side, y, c.radius, math::kPi, 2.0f * math::kPi);
+                }
+            }
+        }
         dl->PopClipRect();
         const ImVec2 p{vp_min.x + 10, vp_min.y + 8};
         dl->AddText(p, IM_COL32(220, 220, 225, 230), "Perspective   Lit");
@@ -1407,6 +1513,104 @@ struct EditorApp::Impl {
             }
         }
 
+        // Physics
+        const auto prop = [](const char* label) {
+            ImGui::AlignTextToFramePadding();
+            ImGui::Text("%s", label);
+            ImGui::SameLine(96);
+            ImGui::SetNextItemWidth(-1);
+        };
+        if (world->has<simulation::Collider>(e)) {
+            bool remove = false;
+            if (component_header("Collider", true, remove) && !remove) {
+                simulation::Collider c = *world->get<simulation::Collider>(e);
+                const auto dragged = [&](bool changed, const char* label) {
+                    if (changed) world->add<simulation::Collider>(e, c);
+                    track_edit(e, label);
+                };
+                const auto at_once = [&](const char* label) {
+                    const EntityState before = capture(*world, e);
+                    world->add<simulation::Collider>(e, c);
+                    record(make_edit_command(label, before, capture(*world, e)));
+                };
+                prop("Shape");
+                int shape = static_cast<int>(c.shape);
+                if (ImGui::Combo("##shape", &shape, "Box\0Sphere\0Capsule\0")) {
+                    c = fitted_collider(e, static_cast<simulation::ShapeType>(shape));
+                    at_once("Change collider shape");
+                }
+                if (c.shape == simulation::ShapeType::Box) {
+                    prop("Half size");
+                    dragged(ImGui::DragFloat3("##half", &c.half_extents.x, 0.01f, 0.01f, 1000.0f, "%.2f"), "Resize collider");
+                } else {
+                    prop("Radius");
+                    dragged(ImGui::DragFloat("##radius", &c.radius, 0.01f, 0.01f, 1000.0f, "%.2f m"), "Resize collider");
+                }
+                if (c.shape == simulation::ShapeType::Capsule) {
+                    prop("Half height");
+                    dragged(ImGui::DragFloat("##halfheight", &c.half_height, 0.01f, 0.01f, 1000.0f, "%.2f m"), "Resize collider");
+                }
+                prop("Offset");
+                dragged(ImGui::DragFloat3("##offset", &c.offset.x, 0.01f, -1000.0f, 1000.0f, "%.2f"), "Move collider");
+                if (ImGui::Button("Fit to mesh")) {
+                    c = fitted_collider(e, c.shape);
+                    at_once("Fit collider to mesh");
+                }
+                if (!world->has<simulation::RigidBody>(e)) ImGui::TextDisabled("No Rigid Body: solid and never moves.");
+            }
+            if (remove) {
+                const EntityState before = capture(*world, e);
+                world->remove<simulation::Collider>(e);
+                record(make_edit_command("Remove Collider", before, capture(*world, e)));
+            }
+        }
+        if (world->has<simulation::RigidBody>(e)) {
+            bool remove = false;
+            if (component_header("Rigid Body", true, remove) && !remove) {
+                simulation::RigidBody rb = *world->get<simulation::RigidBody>(e);
+                const auto dragged = [&](bool changed, const char* label) {
+                    if (changed) world->add<simulation::RigidBody>(e, rb);
+                    track_edit(e, label);
+                };
+                prop("Type");
+                int type = static_cast<int>(rb.type);
+                if (ImGui::Combo("##bodytype", &type, "Static\0Dynamic\0Kinematic\0")) {
+                    const EntityState before = capture(*world, e);
+                    rb.type = static_cast<simulation::BodyType>(type);
+                    world->add<simulation::RigidBody>(e, rb);
+                    record(make_edit_command("Change body type", before, capture(*world, e)));
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+                    ImGui::SetTooltip("Dynamic: moved by gravity and collisions.\nKinematic: follows its transform and pushes others.\n"
+                                      "Static: never moves.");
+                if (rb.type == simulation::BodyType::Dynamic) {
+                    prop("Mass");
+                    dragged(ImGui::DragFloat("##mass", &rb.mass, 0.05f, 0.01f, 100000.0f, "%.2f kg"), "Change mass");
+                }
+                prop("Friction");
+                dragged(ImGui::SliderFloat("##friction", &rb.friction, 0.0f, 1.5f, "%.2f"), "Change friction");
+                prop("Bounciness");
+                dragged(ImGui::SliderFloat("##restitution", &rb.restitution, 0.0f, 1.0f, "%.2f"), "Change bounciness");
+                if (rb.type == simulation::BodyType::Dynamic) {
+                    prop("Gravity");
+                    dragged(ImGui::DragFloat("##gravityscale", &rb.gravity_scale, 0.01f, -10.0f, 10.0f, "x %.2f"), "Change gravity scale");
+                    prop("Damping");
+                    dragged(ImGui::DragFloat("##lineardamping", &rb.linear_damping, 0.005f, 0.0f, 10.0f, "%.3f"), "Change damping");
+                    prop("Spin damping");
+                    dragged(ImGui::DragFloat("##angulardamping", &rb.angular_damping, 0.005f, 0.0f, 10.0f, "%.3f"), "Change spin damping");
+                    prop("Velocity");
+                    dragged(ImGui::DragFloat3("##velocity", &rb.linear_velocity.x, 0.05f, -1000.0f, 1000.0f, "%.2f"), "Change velocity");
+                }
+                if (!world->has<simulation::Collider>(e)) ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "Needs a Collider to take part in physics.");
+                if (play == PlayState::Editing) ImGui::TextDisabled("Simulates while playing (Alt+P).");
+            }
+            if (remove) {
+                const EntityState before = capture(*world, e);
+                world->remove<simulation::RigidBody>(e);
+                record(make_edit_command("Remove Rigid Body", before, capture(*world, e)));
+            }
+        }
+
         // Light
         if (world->has<render::Light>(e)) {
             bool remove = false;
@@ -1511,7 +1715,7 @@ struct EditorApp::Impl {
         for (const world::ComponentId id : world->components_of(e)) {
             const auto& info = world->component_info(id);
             if (info.name == "Name" || info.name == "Transform" || info.name == "MeshInstance" || info.name == "Spin" ||
-                info.name == "Light" || info.name == "Environment" ||
+                info.name == "Light" || info.name == "Environment" || info.name == "RigidBody" || info.name == "Collider" ||
                 info.name == "GlobalTransform")
                 continue;
             others.push_back(info.name);
@@ -1529,6 +1733,16 @@ struct EditorApp::Impl {
             if (ImGui::MenuItem("Static Mesh (Cube)", nullptr, false, !world->has<render::MeshInstance>(e))) {
                 world->add<render::MeshInstance>(e, render::MeshInstance{cube, {0.75f, 0.75f, 0.78f}});
                 record(make_edit_command("Add Static Mesh", before, capture(*world, e)));
+            }
+            if (ImGui::MenuItem("Collider (fit to mesh)", nullptr, false, !world->has<simulation::Collider>(e))) {
+                world->add<simulation::Collider>(e, fitted_collider(e, simulation::ShapeType::Box));
+                record(make_edit_command("Add Collider", before, capture(*world, e)));
+            }
+            if (ImGui::MenuItem("Rigid Body", nullptr, false, !world->has<simulation::RigidBody>(e))) {
+                if (!world->has<simulation::Collider>(e))
+                    world->add<simulation::Collider>(e, fitted_collider(e, simulation::ShapeType::Box));
+                world->add<simulation::RigidBody>(e);
+                record(make_edit_command("Add Rigid Body", before, capture(*world, e)));
             }
             for (const auto type : {render::LightType::Point, render::LightType::Directional}) {
                 const char* label = type == render::LightType::Point ? "Point Light" : "Directional Light";
@@ -1621,8 +1835,16 @@ struct EditorApp::Impl {
         if (ImGui::Button("Cube", ImVec2(w, 0))) spawn("Cube", true, false);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("Static mesh cube at the view focus");
         if (ImGui::Button("Spinning Cube", ImVec2(w, 0))) spawn("Spinning Cube", true, true, {0.35f, 0.65f, 1.0f});
+        if (ImGui::Button("Sphere", ImVec2(w, 0))) spawn("Sphere", true, false, {0.75f, 0.75f, 0.78f}, library->sphere());
         if (ImGui::Button("Empty Actor", ImVec2(w, 0))) spawn("Empty", false, false);
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("Transform only; use as a group or pivot");
+        ImGui::Spacing();
+        ImGui::TextDisabled("Physics");
+        if (ImGui::Button("Physics Cube", ImVec2(w, 0))) spawn_physics(false);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
+            ImGui::SetTooltip("A cube with a collider and a rigid body: press Play and it falls. Placed 3 m above the view focus");
+        if (ImGui::Button("Physics Sphere", ImVec2(w, 0))) spawn_physics(true);
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("A bouncy ball. Add a Collider to the ground so it has something to land on");
         ImGui::Spacing();
         ImGui::TextDisabled("Lights");
         if (ImGui::Button("Directional Light", ImVec2(w, 0))) spawn_light(render::LightType::Directional);
@@ -1649,6 +1871,7 @@ struct EditorApp::Impl {
     static std::string asset_label(const std::optional<std::string>& name) {
         if (!name) return "(unknown)";
         if (*name == render::kBuiltinCube) return "Cube";
+        if (*name == render::kBuiltinSphere) return "Sphere";
         constexpr std::string_view prefix = "asset:";
         if (name->rfind(prefix, 0) != 0) return *name;
         std::string rest = name->substr(prefix.size());
@@ -1793,6 +2016,8 @@ struct EditorApp::Impl {
             row("Draw calls", std::to_string(last_stats.draws) + " (+" + std::to_string(last_stats.shadow_draws) + " shadow)");
             row("Point lights", std::to_string(last_stats.point_lights));
             row("Sun shadows", last_stats.sun_shadows ? "on" : "off");
+            row("Physics bodies", physics ? std::to_string(physics_stats.bodies) + " (" + std::to_string(physics_stats.active_bodies) + " awake)"
+                                           : std::string("not playing"));
             row("Entities", std::to_string(world->entity_count()));
             row("Archetypes", std::to_string(world->archetype_count()));
             row("Component types", std::to_string(world->component_type_count()));

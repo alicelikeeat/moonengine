@@ -55,3 +55,29 @@ endif()
 add_library(aether_stb_image STATIC stb/stb_image_impl.c)
 target_include_directories(aether_stb_image SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/stb)
 target_compile_definitions(aether_stb_image PUBLIC STBI_ONLY_PNG STBI_ONLY_JPEG STBI_NO_STDIO STBI_NO_LINEAR STBI_MAX_DIMENSIONS=16384)
+
+# Jolt Physics (MIT): rigid body simulation behind engine/simulation.
+# Built with a fixed, conservative configuration; the definitions are PUBLIC
+# because Jolt's headers must see the same ones as its sources.
+file(GLOB_RECURSE _jolt_sources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/jolt/Jolt/*.cpp)
+add_library(aether_jolt STATIC ${_jolt_sources})
+target_include_directories(aether_jolt SYSTEM PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/jolt)
+target_compile_features(aether_jolt PUBLIC cxx_std_17)
+# No asserts, profiler, debug renderer or object stream: the engine checks
+# its own inputs and draws its own debug shapes.
+target_compile_definitions(aether_jolt PUBLIC JPH_DISABLE_CUSTOM_ALLOCATOR)
+if(MSVC)
+    target_compile_options(aether_jolt PRIVATE /W0 /EHsc)
+else()
+    # SSE4.2 + POPCNT: every x86-64 CPU since about 2009. Wider instruction
+    # sets are left off so one binary runs everywhere.
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag(-msse4.2 AETHER_HAS_SSE42)
+    if(AETHER_HAS_SSE42 AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
+        target_compile_options(aether_jolt PUBLIC -msse4.2 -mpopcnt)
+    endif()
+    target_compile_options(aether_jolt PRIVATE -w)
+endif()
+set_target_properties(aether_jolt PROPERTIES POSITION_INDEPENDENT_CODE ON UNITY_BUILD ON UNITY_BUILD_BATCH_SIZE 32)
+find_package(Threads REQUIRED)
+target_link_libraries(aether_jolt PUBLIC Threads::Threads)

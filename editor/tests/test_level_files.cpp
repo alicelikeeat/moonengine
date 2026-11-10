@@ -1,4 +1,5 @@
 #include <filesystem>
+#include <cstdio>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -91,4 +92,43 @@ AETHER_TEST(schema_example_loads_in_the_engine) {
     CHECK_EQ(report.value().entities, std::size_t{2});
     REQUIRE(report.value().warnings.size() == 1);  // the plug-in component is kept, not dropped
     CHECK(report.value().warnings[0].find("FuturePluginThing") != std::string::npos);
+}
+
+// Undo and Play/Stop go through snapshots. A component the level format can
+// save but a snapshot does not carry would silently vanish on Stop, so:
+// every registered serializer must have a component in this world, and a
+// snapshot round trip must reproduce the saved level exactly.
+AETHER_TEST(snapshots_carry_every_component_the_level_format_saves) {
+    render::MeshRegistry meshes;
+    meshes.add(std::string(render::kBuiltinCube), 0);
+    world::SerializerRegistry reg;
+    register_level_components(reg, meshes);
+    world::World a({.seed = 5});
+    build_demo_scene(a, 0);
+    const world::Entity body = a.create();
+    a.add<world::Name>(body, world::Name{"Falling Box"});
+    a.add<world::Transform>(body, world::Transform{{1, 5, 2}});
+    a.add<simulation::Collider>(body);
+    simulation::RigidBody rb;
+    rb.mass = 3.0f;
+    rb.linear_velocity = {0, 1, 0};
+    a.add<simulation::RigidBody>(body, rb);
+    const world::Entity unknown = a.create();
+    a.add<world::Name>(unknown, world::Name{"Plugin Thing"});
+    world::UnknownComponents extra;
+    extra.components.emplace_back("FuturePlugin", Json(3.0));
+    a.add<world::UnknownComponents>(unknown, extra);
+
+    const std::string saved = to_json_string(world::save_level(a, reg), 1);
+    for (const auto& serializer : reg.all()) {
+        if (saved.find("\"" + serializer.name + "\"") == std::string::npos)
+            std::fprintf(stderr, "    no %s in the test world: add one so its snapshot support is checked\n",
+                         serializer.name.c_str());
+        CHECK(saved.find("\"" + serializer.name + "\"") != std::string::npos);
+    }
+
+    world::World b({.seed = 6});
+    restore(b, capture_world(a));
+    const std::string restored = to_json_string(world::save_level(b, reg), 1);
+    CHECK(restored == saved);
 }

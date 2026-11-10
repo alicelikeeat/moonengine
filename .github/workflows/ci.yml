@@ -68,7 +68,9 @@ jobs:
 
       - name: Check generated sample models match their generator
         if: matrix.preset == 'linux-gcc'
-        run: python3 tools/make_sample_content.py --check
+        run: |
+          python3 tools/make_sample_content.py --check
+          python3 tools/make_sample_levels.py --check
 
       - name: Smoke-test the windowed sample (virtual display, software Vulkan)
         if: matrix.preset == 'linux-gcc'
@@ -77,6 +79,8 @@ jobs:
           xvfb-run -a ./build/linux-gcc/samples/spinning_cubes/aether_spinning_cubes --level samples/levels/solar_system.alevel --frames 60 --validation
           xvfb-run -a ./build/linux-gcc/samples/spinning_cubes/aether_spinning_cubes --level samples/levels/model_garden.alevel --content samples/content --frames 60 --validation 2>&1 | tee garden.log
           ! grep -qi "warning" garden.log
+          xvfb-run -a ./build/linux-gcc/samples/spinning_cubes/aether_spinning_cubes --level samples/levels/physics_playground.alevel --frames 120 --validation 2>&1 | tee physics.log
+          ! grep -qi "warning" physics.log
 
       - name: Smoke-test the editor (virtual display, software Vulkan)
         if: matrix.preset == 'linux-gcc'

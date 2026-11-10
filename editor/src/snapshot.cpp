@@ -19,6 +19,10 @@ EntityState capture(world::World& w, world::Entity e) {
     if (const auto* c = w.get<world::Transform>(e)) s.transform = *c;
     if (const auto* c = w.get<render::MeshInstance>(e)) s.mesh = *c;
     if (const auto* c = w.get<Spin>(e)) s.spin = *c;
+    if (const auto* c = w.get<render::Light>(e)) s.light = *c;
+    if (const auto* c = w.get<render::Environment>(e)) s.environment = *c;
+    if (const auto* c = w.get<simulation::RigidBody>(e)) s.rigid_body = *c;
+    if (const auto* c = w.get<simulation::Collider>(e)) s.collider = *c;
     if (const auto* c = w.get<world::UnknownComponents>(e)) s.unknown = *c;
     return s;
 }
@@ -49,6 +53,9 @@ std::vector<EntityState> capture_world(world::World& w) {
     w.each<const world::Name>([&](world::Entity e, const world::Name&) { collect(e); });
     w.each<const world::Children>([&](world::Entity e, const world::Children&) { collect(e); });
     w.each<const world::Parent>([&](world::Entity e, const world::Parent&) { collect(e); });
+    w.each<const render::Light>([&](world::Entity e, const render::Light&) { collect(e); });
+    w.each<const render::Environment>([&](world::Entity e, const render::Environment&) { collect(e); });
+    w.each<const simulation::Collider>([&](world::Entity e, const simulation::Collider&) { collect(e); });
     for (const world::Entity e : all) {
         const world::Entity p = h::parent_of(w, e);
         if (p.is_null() || !w.alive(p)) roots.push_back(e);
@@ -74,6 +81,14 @@ void apply_components(world::World& w, world::Entity e, const EntityState& s) {
     struct MeshTag { using type = render::MeshInstance; };
     struct SpinTag { using type = Spin; };
     struct UnknownTag { using type = world::UnknownComponents; };
+    struct LightTag { using type = render::Light; };
+    struct EnvironmentTag { using type = render::Environment; };
+    struct RigidBodyTag { using type = simulation::RigidBody; };
+    struct ColliderTag { using type = simulation::Collider; };
+    sync(s.light, LightTag{});
+    sync(s.environment, EnvironmentTag{});
+    sync(s.rigid_body, RigidBodyTag{});
+    sync(s.collider, ColliderTag{});
     sync(s.name, NameTag{});
     sync(s.transform, TransformTag{});
     sync(s.mesh, MeshTag{});

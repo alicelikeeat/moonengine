@@ -19,6 +19,7 @@
 namespace aether::render {
 
 inline constexpr std::string_view kBuiltinCube = "builtin:cube";
+inline constexpr std::string_view kBuiltinSphere = "builtin:sphere";
 inline constexpr std::string_view kBuiltinWhite = "builtin:white";
 
 class MeshRegistry {

@@ -11,6 +11,7 @@ aether_add_module(editor
         foundation
         world
         render
+        simulation
         gameplay)
 target_link_libraries(aether_editor PRIVATE aether_imgui aether_imguizmo)
 
