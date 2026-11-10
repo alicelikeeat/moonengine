@@ -21,6 +21,7 @@
 
 #include "aether/render/light.hpp"
 #include "aether/render/renderer.hpp"
+#include "aether/render/sky.hpp"
 #include "aether/world/hierarchy.hpp"
 #include "generated/shaders.inl"
 
@@ -42,7 +43,12 @@ constexpr const char* kValidationLayer = "VK_LAYER_KHRONOS_validation";
 constexpr std::uint32_t kMaxTextures = 1024;
 constexpr std::uint32_t kShadowMapSize = 2048;
 constexpr VkFormat kShadowFormat = VK_FORMAT_D32_SFLOAT;
-constexpr float kShadowReach = 40.0f;  // the sun's shadow map covers +-this around the camera target
+constexpr std::uint32_t kShadowCascades = 3;  // must match light_view_proj[] in common.glsl
+constexpr float kShadowDistance = 80.0f;      // view distance covered by the cascades
+constexpr float kCascadeLambda = 0.7f;        // 0: uniform splits, 1: logarithmic
+constexpr std::uint32_t kSkyCubeSize = 32;
+constexpr std::uint32_t kSkyCubeMips = 6;     // mesh.frag samples mip = roughness * 5
+constexpr VkFormat kSkyFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
 
 // Layouts below must match engine/render/shaders/common.glsl.
 struct PushConstants {
@@ -60,17 +66,23 @@ struct GpuPointLight {
 
 struct FrameUniforms {  // std140
     float view_proj[16];
-    float light_view_proj[16];
+    float inv_view_proj[16];
+    float light_view_proj[kShadowCascades][16];
     float camera_position[4];
+    float camera_forward[4];
     float sun_direction[4];
     float sun_color[4];
-    float sky_color[4];
-    float ground_color[4];
-    float shadow_params[4];
+    float cascade_splits[4];
+    float cascade_texels[4];
+    float cascade_bias[4];
+    float sky_zenith[4];
+    float sky_horizon[4];
+    float sky_ground[4];
+    float irradiance_sh[9][4];
     std::uint32_t counts[4];
     GpuPointLight points[kMaxPointLights];
 };
-static_assert(sizeof(FrameUniforms) == 752, "std140 layout of the Frame block");
+static_assert(sizeof(FrameUniforms) == 1152, "std140 layout of the Frame block");
 
 void set4(float* out, math::Vec3 v, float w) {
     out[0] = v.x;
@@ -150,6 +162,7 @@ struct Frame {
     VkFence fence = VK_NULL_HANDLE;
     VkSemaphore image_available = VK_NULL_HANDLE;
     Buffer uniforms;                         // FrameUniforms, host-visible
+    Buffer sky_staging;                      // sky cube texels to upload this frame
     VkDescriptorSet set = VK_NULL_HANDLE;    // textures, uniforms, shadow map
 };
 
@@ -218,8 +231,10 @@ private:
     // Gathers draws and lights and fills the current frame's uniforms.
     void prepare_frame(world::World& world, const Camera& camera, const RenderOptions& options, VkExtent2D extent,
                        FrameStats& stats);
-    // Renders the sun's shadow map (cleared when shadows are off) and leaves
-    // it readable by the scene pass.
+    // Uploads the baked sky cube when the Environment changed.
+    void record_sky_upload(VkCommandBuffer cmd);
+    // Renders the sun's shadow cascades (cleared when shadows are off) and
+    // leaves them readable by the scene pass.
     void record_shadows(VkCommandBuffer cmd, FrameStats& stats);
     // Draws the scene into `color` (left in COLOR_ATTACHMENT_OPTIMAL).
     void record_scene(VkCommandBuffer cmd, VkImage color, VkImageView color_view, VkExtent2D extent,
@@ -249,6 +264,7 @@ private:
     VkPipeline pipeline_ = VK_NULL_HANDLE;
     VkPipeline grid_pipeline_ = VK_NULL_HANDLE;
     VkPipeline shadow_pipeline_ = VK_NULL_HANDLE;
+    VkPipeline sky_pipeline_ = VK_NULL_HANDLE;
     VkFormat scene_format_ = kOffscreenFormat;  // what the scene pipelines render to
     VkFormat color_format_ = kOffscreenFormat;  // swapchain format
     VkColorSpaceKHR color_space_ = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
@@ -278,7 +294,26 @@ private:
     std::vector<GpuTexture> textures_;  // [0] = white
     std::uint32_t max_texture_size_ = 4096;
     float max_anisotropy_ = 0.0f;  // 0: anisotropic filtering unavailable
-    Image shadow_map_;
+    // Sun shadow cascades: one depth array image, a view per layer to render
+    // into and an array view to sample.
+    VkImage shadow_image_ = VK_NULL_HANDLE;
+    VkDeviceMemory shadow_memory_ = VK_NULL_HANDLE;
+    VkImageView shadow_array_view_ = VK_NULL_HANDLE;
+    std::array<VkImageView, kShadowCascades> shadow_layer_views_{};
+    // Each cascade's light-space rectangle (centre x, y, half size) for culling.
+    std::array<std::array<float, 3>, kShadowCascades> cascade_rects_{};
+    math::Vec3 light_right_{}, light_up_{};
+
+    // Prefiltered sky cube for reflections, re-baked when the Environment changes.
+    VkImage sky_image_ = VK_NULL_HANDLE;
+    VkDeviceMemory sky_memory_ = VK_NULL_HANDLE;
+    VkImageView sky_view_ = VK_NULL_HANDLE;
+    VkSampler sky_sampler_ = VK_NULL_HANDLE;
+    std::optional<Environment> baked_environment_;
+    std::array<math::Vec3, 9> sky_irradiance_{};
+    bool sky_upload_pending_ = false;
+    bool sky_image_initialised_ = false;
+    bool draw_sky_ = false;
 
     // Per-frame scene data, rebuilt by prepare_frame().
     std::vector<Draw> draws_;
@@ -698,6 +733,30 @@ Result<void> VulkanRenderer::create_pipeline() {
             }
             if (shadow_vert) vkDestroyShaderModule(device_, shadow_vert, nullptr);
         }
+        if (r == VK_SUCCESS) {
+            // Sky: a full-screen triangle at the far plane, drawn where no
+            // geometry is (depth test equal-or-less against the cleared 1.0).
+            VkShaderModule sky_vert = VK_NULL_HANDLE, sky_frag = VK_NULL_HANDLE;
+            r = make_module(shaders::kSkyVertSpv, sizeof(shaders::kSkyVertSpv), sky_vert);
+            if (r == VK_SUCCESS) r = make_module(shaders::kSkyFragSpv, sizeof(shaders::kSkyFragSpv), sky_frag);
+            if (r == VK_SUCCESS) {
+                stages[0].module = sky_vert;
+                stages[1].module = sky_frag;
+                info.stageCount = 2;
+                VkPipelineVertexInputStateCreateInfo no_input{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+                info.pVertexInputState = &no_input;
+                raster.cullMode = VK_CULL_MODE_NONE;
+                raster.depthBiasEnable = VK_FALSE;
+                depth.depthWriteEnable = VK_FALSE;
+                depth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+                blend_attachment.blendEnable = VK_FALSE;
+                blend.attachmentCount = 1;
+                info.pNext = &rendering;
+                r = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &info, nullptr, &sky_pipeline_);
+            }
+            if (sky_vert) vkDestroyShaderModule(device_, sky_vert, nullptr);
+            if (sky_frag) vkDestroyShaderModule(device_, sky_frag, nullptr);
+        }
     }
     vkDestroyShaderModule(device_, vert, nullptr);
     vkDestroyShaderModule(device_, frag, nullptr);
@@ -1043,7 +1102,11 @@ Result<void> VulkanRenderer::create_swapchain() {
 }
 
 Result<void> VulkanRenderer::create_descriptors() {
-    VkDescriptorSetLayoutBinding bindings[3]{};
+    VkDescriptorSetLayoutBinding bindings[4]{};
+    bindings[3].binding = 3;
+    bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[3].descriptorCount = 1;
+    bindings[3].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     bindings[0].binding = 0;
     bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[0].descriptorCount = kMaxTextures;
@@ -1057,12 +1120,12 @@ Result<void> VulkanRenderer::create_descriptors() {
     bindings[2].descriptorCount = 1;
     bindings[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     VkDescriptorSetLayoutCreateInfo layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    layout.bindingCount = 3;
+    layout.bindingCount = 4;
     layout.pBindings = bindings;
     AETHER_VK_TRY(vkCreateDescriptorSetLayout(device_, &layout, nullptr, &set_layout_));
 
     const VkDescriptorPoolSize sizes[2] = {
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (kMaxTextures + 1) * kFramesInFlight},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, (kMaxTextures + 2) * kFramesInFlight},
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, kFramesInFlight},
     };
     VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -1093,16 +1156,78 @@ Result<void> VulkanRenderer::create_descriptors() {
     shadow.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
     AETHER_VK_TRY(vkCreateSampler(device_, &shadow, nullptr, &shadow_sampler_));
 
-    auto map = create_image(kShadowMapSize, kShadowMapSize, kShadowFormat,
-                            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                            VK_IMAGE_ASPECT_DEPTH_BIT);
-    if (!map) return map.error();
-    shadow_map_ = map.value();
+    const auto allocate = [&](VkImage image, VkDeviceMemory& memory) -> Result<void> {
+        VkMemoryRequirements req;
+        vkGetImageMemoryRequirements(device_, image, &req);
+        auto type = find_memory(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        if (!type) type = find_memory(req.memoryTypeBits, 0);
+        if (!type) return Error{ErrorCode::Unsupported, "no memory type for image"};
+        VkMemoryAllocateInfo alloc{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        alloc.allocationSize = req.size;
+        alloc.memoryTypeIndex = *type;
+        AETHER_VK_TRY(vkAllocateMemory(device_, &alloc, nullptr, &memory));
+        AETHER_VK_TRY(vkBindImageMemory(device_, image, memory, 0));
+        return ok();
+    };
+
+    VkImageCreateInfo shadow_image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    shadow_image.imageType = VK_IMAGE_TYPE_2D;
+    shadow_image.format = kShadowFormat;
+    shadow_image.extent = {kShadowMapSize, kShadowMapSize, 1};
+    shadow_image.mipLevels = 1;
+    shadow_image.arrayLayers = kShadowCascades;
+    shadow_image.samples = VK_SAMPLE_COUNT_1_BIT;
+    shadow_image.tiling = VK_IMAGE_TILING_OPTIMAL;
+    shadow_image.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    AETHER_VK_TRY(vkCreateImage(device_, &shadow_image, nullptr, &shadow_image_));
+    AETHER_TRY(allocate(shadow_image_, shadow_memory_));
+    VkImageViewCreateInfo shadow_view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    shadow_view.image = shadow_image_;
+    shadow_view.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+    shadow_view.format = kShadowFormat;
+    shadow_view.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, kShadowCascades};
+    AETHER_VK_TRY(vkCreateImageView(device_, &shadow_view, nullptr, &shadow_array_view_));
+    for (std::uint32_t c = 0; c < kShadowCascades; ++c) {
+        shadow_view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        shadow_view.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, c, 1};
+        AETHER_VK_TRY(vkCreateImageView(device_, &shadow_view, nullptr, &shadow_layer_views_[c]));
+    }
+
+    VkImageCreateInfo sky_image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    sky_image.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+    sky_image.imageType = VK_IMAGE_TYPE_2D;
+    sky_image.format = kSkyFormat;
+    sky_image.extent = {kSkyCubeSize, kSkyCubeSize, 1};
+    sky_image.mipLevels = kSkyCubeMips;
+    sky_image.arrayLayers = 6;
+    sky_image.samples = VK_SAMPLE_COUNT_1_BIT;
+    sky_image.tiling = VK_IMAGE_TILING_OPTIMAL;
+    sky_image.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    AETHER_VK_TRY(vkCreateImage(device_, &sky_image, nullptr, &sky_image_));
+    AETHER_TRY(allocate(sky_image_, sky_memory_));
+    VkImageViewCreateInfo sky_view{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    sky_view.image = sky_image_;
+    sky_view.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
+    sky_view.format = kSkyFormat;
+    sky_view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, kSkyCubeMips, 0, 6};
+    AETHER_VK_TRY(vkCreateImageView(device_, &sky_view, nullptr, &sky_view_));
+    VkSamplerCreateInfo sky_sampler{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    sky_sampler.magFilter = VK_FILTER_LINEAR;
+    sky_sampler.minFilter = VK_FILTER_LINEAR;
+    sky_sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    sky_sampler.addressModeU = sky_sampler.addressModeV = sky_sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sky_sampler.maxLod = VK_LOD_CLAMP_NONE;
+    AETHER_VK_TRY(vkCreateSampler(device_, &sky_sampler, nullptr, &sky_sampler_));
+    std::size_t sky_texels = 0;
+    for (std::uint32_t mip = 0; mip < kSkyCubeMips; ++mip) sky_texels += std::size_t{6} * (kSkyCubeSize >> mip) * (kSkyCubeSize >> mip);
 
     for (Frame& f : frames_) {
         auto ubo = create_buffer(sizeof(FrameUniforms), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
         if (!ubo) return ubo.error();
         f.uniforms = ubo.value();
+        auto staging = create_buffer(sky_texels * 4 * sizeof(std::uint16_t), VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+        if (!staging) return staging.error();
+        f.sky_staging = staging.value();
         std::memset(f.uniforms.mapped, 0, sizeof(FrameUniforms));
         VkDescriptorSetAllocateInfo alloc{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
         alloc.descriptorPool = descriptor_pool_;
@@ -1110,8 +1235,15 @@ Result<void> VulkanRenderer::create_descriptors() {
         alloc.pSetLayouts = &set_layout_;
         AETHER_VK_TRY(vkAllocateDescriptorSets(device_, &alloc, &f.set));
         const VkDescriptorBufferInfo buffer_info{f.uniforms.buffer, 0, sizeof(FrameUniforms)};
-        const VkDescriptorImageInfo shadow_info{shadow_sampler_, shadow_map_.view, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL};
-        VkWriteDescriptorSet writes[2]{};
+        const VkDescriptorImageInfo shadow_info{shadow_sampler_, shadow_array_view_, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL};
+        const VkDescriptorImageInfo sky_info{sky_sampler_, sky_view_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet writes[3]{};
+        writes[2] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        writes[2].dstSet = f.set;
+        writes[2].dstBinding = 3;
+        writes[2].descriptorCount = 1;
+        writes[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[2].pImageInfo = &sky_info;
         writes[0] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
         writes[0].dstSet = f.set;
         writes[0].dstBinding = 1;
@@ -1124,7 +1256,7 @@ Result<void> VulkanRenderer::create_descriptors() {
         writes[1].descriptorCount = 1;
         writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[1].pImageInfo = &shadow_info;
-        vkUpdateDescriptorSets(device_, 2, writes, 0, nullptr);
+        vkUpdateDescriptorSets(device_, 3, writes, 0, nullptr);
     }
     return ok();
 }
@@ -1396,14 +1528,44 @@ void VulkanRenderer::prepare_frame(world::World& world, const Camera& camera, co
     std::sort(points.begin(), points.end(), [](const Point& a, const Point& b) { return a.distance2 < b.distance2; });
     if (points.size() > kMaxPointLights) points.resize(kMaxPointLights);
 
+    // Environment: the level's own, else the caller's.
+    Environment env = options.environment;
+    bool found_env = false;
+    world.each<const Environment>([&](const Environment& e) {
+        if (!found_env) env = e;
+        found_env = true;
+    });
+    draw_sky_ = env.sky_visible;
+    stats.sky = draw_sky_;
+    // Re-bake the sky light when anything that affects it changed.
+    Environment bake_key = env;
+    bake_key.exposure = 1.0f;
+    bake_key.shadows = true;
+    bake_key.sky_visible = false;
+    if (!baked_environment_ || !(*baked_environment_ == bake_key)) {
+        const SkyBake bake = bake_sky(bake_key, kSkyCubeSize, kSkyCubeMips);
+        std::memcpy(frames_[frame_index_].sky_staging.mapped, bake.cube.data(), bake.cube.size() * sizeof(std::uint16_t));
+        sky_irradiance_ = bake.irradiance;
+        baked_environment_ = bake_key;
+        sky_upload_pending_ = true;
+    }
+
     FrameUniforms u{};
     const float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
     const math::Mat4 view_proj = view_projection(camera, aspect);
     std::memcpy(u.view_proj, view_proj.m, sizeof(u.view_proj));
-    const Environment& env = options.environment;
+    math::Mat4 inv_view_proj;
+    (void)math::inverse(view_proj, inv_view_proj);  // identity if singular: the sky is then just wrong, not undefined
+    std::memcpy(u.inv_view_proj, inv_view_proj.m, sizeof(u.inv_view_proj));
+    Vec3 cam_forward = camera.target - camera.position;
+    cam_forward = math::length(cam_forward) > 0 ? math::normalize(cam_forward) : Vec3{0, 0, -1};
     set4(u.camera_position, camera.position, env.exposure);
-    set4(u.sky_color, env.sky_color * env.ambient_intensity, 0);
-    set4(u.ground_color, env.ground_color * env.ambient_intensity, 0);
+    set4(u.camera_forward, cam_forward, 0);
+    const float ambient = std::max(0.0f, env.ambient_intensity);
+    set4(u.sky_zenith, env.sky_color * ambient, 0);
+    set4(u.sky_horizon, env.horizon_color * ambient, 0);
+    set4(u.sky_ground, env.ground_color * ambient, 0);
+    for (std::size_t k = 0; k < 9; ++k) set4(u.irradiance_sh[k], sky_irradiance_[k], 0);
     u.counts[0] = static_cast<std::uint32_t>(points.size());
     for (std::size_t i = 0; i < points.size(); ++i) {
         set4(u.points[i].position_range, points[i].position, std::max(0.01f, points[i].light.range));
@@ -1414,52 +1576,76 @@ void VulkanRenderer::prepare_frame(world::World& world, const Camera& camera, co
     sun_shadows_ = false;
     if (sun) {
         const Vec3 to_sun = sun->first;
-        set4(u.sun_color, sun->second.color * std::max(0.0f, sun->second.intensity), 0);
-        // Fit an orthographic shadow projection around the casters near the
-        // camera target. Light space: x = right, y = up, z = along the light.
-        const Vec3 forward = to_sun * -1.0f;
-        const Vec3 helper = std::abs(forward.y) < 0.99f ? Vec3{0, 1, 0} : Vec3{1, 0, 0};
-        const Vec3 right = math::normalize(math::cross(forward, helper));
-        const Vec3 up = math::cross(right, forward);
-        const float inf = std::numeric_limits<float>::infinity();
-        Vec3 lo{inf, inf, inf}, hi{-inf, -inf, -inf};
-        for (const Draw& d : draws_) {
-            const Aabb& b = meshes_[d.instance.mesh].bounds;
-            for (int c = 0; c < 8; ++c) {
-                const Vec3 p = d.model.transform_point(
-                    {(c & 1) ? b.max.x : b.min.x, (c & 2) ? b.max.y : b.min.y, (c & 4) ? b.max.z : b.min.z});
-                const Vec3 l{math::dot(p, right), math::dot(p, up), math::dot(p, forward)};
-                lo = {std::min(lo.x, l.x), std::min(lo.y, l.y), std::min(lo.z, l.z)};
-                hi = {std::max(hi.x, l.x), std::max(hi.y, l.y), std::max(hi.z, l.z)};
+        set4(u.sun_color, sun->second.color * std::max(0.0f, sun->second.intensity), 1.0f);
+        if (sun->second.cast_shadows && env.shadows && !draws_.empty()) {
+            // Light space: x = right, y = up, z = along the light.
+            const Vec3 forward = to_sun * -1.0f;
+            const Vec3 helper = std::abs(forward.y) < 0.99f ? Vec3{0, 1, 0} : Vec3{1, 0, 0};
+            const Vec3 right = math::normalize(math::cross(forward, helper));
+            const Vec3 up = math::cross(right, forward);
+            light_right_ = right;
+            light_up_ = up;
+            // Depth range: from the caster nearest the light to the farthest.
+            float z_near = std::numeric_limits<float>::infinity(), z_far = -z_near;
+            for (const Draw& d : draws_) {
+                const Aabb& b = meshes_[d.instance.mesh].bounds;
+                for (int c = 0; c < 8; ++c) {
+                    const float z = math::dot(d.model.transform_point({(c & 1) ? b.max.x : b.min.x, (c & 2) ? b.max.y : b.min.y,
+                                                                       (c & 4) ? b.max.z : b.min.z}),
+                                              forward);
+                    z_near = std::min(z_near, z);
+                    z_far = std::max(z_far, z);
+                }
             }
-        }
-        const Vec3 focus{math::dot(camera.target, right), math::dot(camera.target, up), 0};
-        lo.x = std::max(lo.x, focus.x - kShadowReach);
-        lo.y = std::max(lo.y, focus.y - kShadowReach);
-        hi.x = std::min(hi.x, focus.x + kShadowReach);
-        hi.y = std::min(hi.y, focus.y + kShadowReach);
-        if (sun->second.cast_shadows && env.shadows && !draws_.empty() && lo.x < hi.x && lo.y < hi.y) {
-            // Square, snapped to whole texels so the map does not shimmer
-            // as the camera moves.
-            const float size = std::max({hi.x - lo.x, hi.y - lo.y, 1.0f}) * 1.02f;
-            const float texel = size / static_cast<float>(kShadowMapSize);
-            const float cx = std::round((lo.x + hi.x) * 0.5f / texel) * texel;
-            const float cy = std::round((lo.y + hi.y) * 0.5f / texel) * texel;
-            const float z0 = lo.z - 1.0f, z1 = hi.z + 1.0f;
-            const float half = size * 0.5f;
-            math::Mat4 m;
-            const Vec3 rows[3] = {right * (1.0f / half), up * (1.0f / half), forward * (1.0f / (z1 - z0))};
-            const float offsets[3] = {-cx / half, -cy / half, -z0 / (z1 - z0)};
-            for (int r = 0; r < 3; ++r) {
-                m.at(0, static_cast<std::size_t>(r)) = rows[r].x;
-                m.at(1, static_cast<std::size_t>(r)) = rows[r].y;
-                m.at(2, static_cast<std::size_t>(r)) = rows[r].z;
-                m.at(3, static_cast<std::size_t>(r)) = offsets[r];
+            z_near -= 1.0f;
+            z_far += 1.0f;
+
+            // Camera basis for the frustum slices.
+            Vec3 cam_right = math::cross(cam_forward, camera.up);
+            cam_right = math::length(cam_right) > 0 ? math::normalize(cam_right) : Vec3{1, 0, 0};
+            const Vec3 cam_up = math::cross(cam_right, cam_forward);
+            const float tan_y = std::tan(camera.fov_y * 0.5f), tan_x = tan_y * aspect;
+            const float near_d = std::max(camera.near_plane, 0.01f);
+            const float far_d = std::max(near_d * 2.0f, std::min(camera.far_plane, kShadowDistance));
+            float slice_near = near_d;
+            for (std::uint32_t c = 0; c < kShadowCascades; ++c) {
+                const float t = static_cast<float>(c + 1) / static_cast<float>(kShadowCascades);
+                const float slice_far = kCascadeLambda * near_d * std::pow(far_d / near_d, t) +
+                                        (1.0f - kCascadeLambda) * (near_d + (far_d - near_d) * t);
+                // Bounding sphere of the slice: its size does not change as
+                // the camera turns, which keeps the shadows steady.
+                Vec3 corners[8];
+                Vec3 centre{0, 0, 0};
+                for (int k = 0; k < 8; ++k) {
+                    const float d = (k & 4) ? slice_far : slice_near;
+                    corners[k] = camera.position + cam_forward * d + cam_right * (((k & 1) ? 1.0f : -1.0f) * tan_x * d) +
+                                 cam_up * (((k & 2) ? 1.0f : -1.0f) * tan_y * d);
+                    centre = centre + corners[k] * 0.125f;
+                }
+                float radius = 0.0f;
+                for (const Vec3& corner : corners) radius = std::max(radius, math::length(corner - centre));
+                radius = std::ceil(radius * 16.0f) / 16.0f;
+                const float texel = 2.0f * radius / static_cast<float>(kShadowMapSize);
+                // Snap the centre to whole texels so edges do not shimmer.
+                const float cx = std::round(math::dot(centre, right) / texel) * texel;
+                const float cy = std::round(math::dot(centre, up) / texel) * texel;
+                const float depth_range = std::max(z_far - z_near, 1.0f);
+                math::Mat4 m;
+                const Vec3 rows[3] = {right * (1.0f / radius), up * (1.0f / radius), forward * (1.0f / depth_range)};
+                const float offsets[3] = {-cx / radius, -cy / radius, -z_near / depth_range};
+                for (std::size_t r = 0; r < 3; ++r) {
+                    m.at(0, r) = rows[r].x;
+                    m.at(1, r) = rows[r].y;
+                    m.at(2, r) = rows[r].z;
+                    m.at(3, r) = offsets[r];
+                }
+                std::memcpy(u.light_view_proj[c], m.m, sizeof(u.light_view_proj[c]));
+                u.cascade_splits[c] = slice_far;
+                u.cascade_texels[c] = texel;
+                u.cascade_bias[c] = texel * 0.5f / depth_range;
+                cascade_rects_[c] = {cx, cy, radius};
+                slice_near = slice_far;
             }
-            std::memcpy(u.light_view_proj, m.m, sizeof(u.light_view_proj));
-            u.shadow_params[0] = 1.0f / static_cast<float>(kShadowMapSize);
-            u.shadow_params[1] = texel;
-            u.shadow_params[2] = texel * 0.5f / (z1 - z0);
             sun_shadows_ = true;
         }
         set4(u.sun_direction, to_sun, sun_shadows_ ? 1.0f : 0.0f);
@@ -1485,52 +1671,140 @@ PushConstants push_for(const Draw& d, const RenderOptions& options) {
 
 }  // namespace
 
+void VulkanRenderer::record_sky_upload(VkCommandBuffer cmd) {
+    if (!sky_upload_pending_) return;
+    sky_upload_pending_ = false;
+    const auto barrier = [&](VkImageLayout from, VkImageLayout to, VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access,
+                             VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access) {
+        VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+        b.srcStageMask = src_stage;
+        b.srcAccessMask = src_access;
+        b.dstStageMask = dst_stage;
+        b.dstAccessMask = dst_access;
+        b.oldLayout = from;
+        b.newLayout = to;
+        b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = sky_image_;
+        b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, kSkyCubeMips, 0, 6};
+        VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep.imageMemoryBarrierCount = 1;
+        dep.pImageMemoryBarriers = &b;
+        vkCmdPipelineBarrier2(cmd, &dep);
+    };
+    // The previous frame may still be sampling the cube; its contents are replaced.
+    barrier(VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            sky_image_initialised_ ? VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT : VK_PIPELINE_STAGE_2_NONE,
+            sky_image_initialised_ ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : VK_ACCESS_2_NONE, VK_PIPELINE_STAGE_2_COPY_BIT,
+            VK_ACCESS_2_TRANSFER_WRITE_BIT);
+    std::array<VkBufferImageCopy, kSkyCubeMips> regions{};
+    VkDeviceSize offset = 0;
+    for (std::uint32_t mip = 0; mip < kSkyCubeMips; ++mip) {
+        const std::uint32_t edge = kSkyCubeSize >> mip;
+        regions[mip].bufferOffset = offset;
+        regions[mip].imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, mip, 0, 6};
+        regions[mip].imageExtent = {edge, edge, 1};
+        offset += VkDeviceSize{6} * edge * edge * 4 * sizeof(std::uint16_t);
+    }
+    vkCmdCopyBufferToImage(cmd, frames_[frame_index_].sky_staging.buffer, sky_image_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           kSkyCubeMips, regions.data());
+    barrier(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_COPY_BIT,
+            VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+    sky_image_initialised_ = true;
+}
+
 void VulkanRenderer::record_shadows(VkCommandBuffer cmd, FrameStats& stats) {
     constexpr VkPipelineStageFlags2 kDepthStages =
         VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
-    // The previous frame's scene pass may still be sampling the map.
-    image_barrier(cmd, shadow_map_.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
-                  VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_NONE,
-                  kDepthStages, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
-    VkRenderingAttachmentInfo depth_att{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-    depth_att.imageView = shadow_map_.view;
-    depth_att.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-    depth_att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    depth_att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    depth_att.clearValue.depthStencil = {1.0f, 0};
-    VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO};
-    rendering.renderArea = {{0, 0}, {kShadowMapSize, kShadowMapSize}};
-    rendering.layerCount = 1;
-    rendering.pDepthAttachment = &depth_att;
-    vkCmdBeginRendering(cmd, &rendering);
+    const auto barrier = [&](VkImageLayout from, VkImageLayout to, VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access,
+                             VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access) {
+        VkImageMemoryBarrier2 b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+        b.srcStageMask = src_stage;
+        b.srcAccessMask = src_access;
+        b.dstStageMask = dst_stage;
+        b.dstAccessMask = dst_access;
+        b.oldLayout = from;
+        b.newLayout = to;
+        b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = shadow_image_;
+        b.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, kShadowCascades};
+        VkDependencyInfo dep{VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep.imageMemoryBarrierCount = 1;
+        dep.pImageMemoryBarriers = &b;
+        vkCmdPipelineBarrier2(cmd, &dep);
+    };
+    // The previous frame's scene pass may still be sampling the cascades.
+    barrier(VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            VK_ACCESS_2_NONE, kDepthStages,
+            VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+
+    // World-space bounding spheres of the casters, for per-cascade culling.
+    struct Sphere {
+        float x, y, radius;  // light-space centre and radius
+    };
+    std::vector<Sphere> spheres;
     if (sun_shadows_) {
-        const VkViewport viewport{0, 0, static_cast<float>(kShadowMapSize), static_cast<float>(kShadowMapSize), 0, 1};
-        const VkRect2D scissor{{0, 0}, {kShadowMapSize, kShadowMapSize}};
-        vkCmdSetViewport(cmd, 0, 1, &viewport);
-        vkCmdSetScissor(cmd, 0, 1, &scissor);
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline_);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &frames_[frame_index_].set, 0,
-                                nullptr);
-        MeshId bound = static_cast<MeshId>(-1);
-        const RenderOptions no_highlight;
+        spheres.reserve(draws_.size());
         for (const Draw& d : draws_) {
-            const GpuMesh& mesh = meshes_[d.instance.mesh];
-            if (d.instance.mesh != bound) {
-                const VkDeviceSize offset = 0;
-                vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertices.buffer, &offset);
-                vkCmdBindIndexBuffer(cmd, mesh.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-                bound = d.instance.mesh;
-            }
-            const PushConstants pc = push_for(d, no_highlight);
-            vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
-            vkCmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0);
-            ++stats.shadow_draws;
+            const Aabb& b = meshes_[d.instance.mesh].bounds;
+            const math::Vec3 centre = d.model.transform_point((b.min + b.max) * 0.5f);
+            float radius = 0.0f;
+            for (int c = 0; c < 8; ++c)
+                radius = std::max(radius, math::length(d.model.transform_point({(c & 1) ? b.max.x : b.min.x,
+                                                                                (c & 2) ? b.max.y : b.min.y,
+                                                                                (c & 4) ? b.max.z : b.min.z}) -
+                                                       centre));
+            spheres.push_back({math::dot(centre, light_right_), math::dot(centre, light_up_), radius});
         }
     }
-    vkCmdEndRendering(cmd);
-    image_barrier(cmd, shadow_map_.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                  VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, kDepthStages, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                  VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+
+    for (std::uint32_t cascade = 0; cascade < kShadowCascades; ++cascade) {
+        VkRenderingAttachmentInfo depth_att{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        depth_att.imageView = shadow_layer_views_[cascade];
+        depth_att.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth_att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depth_att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        depth_att.clearValue.depthStencil = {1.0f, 0};
+        VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        rendering.renderArea = {{0, 0}, {kShadowMapSize, kShadowMapSize}};
+        rendering.layerCount = 1;
+        rendering.pDepthAttachment = &depth_att;
+        vkCmdBeginRendering(cmd, &rendering);
+        if (sun_shadows_) {
+            const VkViewport viewport{0, 0, static_cast<float>(kShadowMapSize), static_cast<float>(kShadowMapSize), 0, 1};
+            const VkRect2D scissor{{0, 0}, {kShadowMapSize, kShadowMapSize}};
+            vkCmdSetViewport(cmd, 0, 1, &viewport);
+            vkCmdSetScissor(cmd, 0, 1, &scissor);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, shadow_pipeline_);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, layout_, 0, 1, &frames_[frame_index_].set, 0,
+                                    nullptr);
+            MeshId bound = static_cast<MeshId>(-1);
+            const RenderOptions no_highlight;
+            const auto& rect = cascade_rects_[cascade];
+            for (std::size_t i = 0; i < draws_.size(); ++i) {
+                const Sphere& sphere = spheres[i];
+                if (std::abs(sphere.x - rect[0]) > rect[2] + sphere.radius ||
+                    std::abs(sphere.y - rect[1]) > rect[2] + sphere.radius)
+                    continue;  // cannot touch this cascade
+                const Draw& d = draws_[i];
+                const GpuMesh& mesh = meshes_[d.instance.mesh];
+                if (d.instance.mesh != bound) {
+                    const VkDeviceSize offset = 0;
+                    vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertices.buffer, &offset);
+                    vkCmdBindIndexBuffer(cmd, mesh.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+                    bound = d.instance.mesh;
+                }
+                PushConstants pc = push_for(d, no_highlight);
+                pc.material[0] = cascade;
+                vkCmdPushConstants(cmd, layout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc), &pc);
+                vkCmdDrawIndexed(cmd, mesh.index_count, 1, 0, 0, 0);
+                ++stats.shadow_draws;
+            }
+        }
+        vkCmdEndRendering(cmd);
+    }
+    barrier(VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL, kDepthStages,
+            VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
 }
 
 void VulkanRenderer::record_scene(VkCommandBuffer cmd, VkImage color, VkImageView color_view, VkExtent2D extent,
@@ -1594,6 +1868,12 @@ void VulkanRenderer::record_scene(VkCommandBuffer cmd, VkImage color, VkImageVie
         ++stats.draws;
     }
 
+    // Sky behind everything drawn so far.
+    if (draw_sky_) {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, sky_pipeline_);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+    }
+
     // Grid last: it is blended over opaque geometry and the sky.
     if (options.grid) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, grid_pipeline_);
@@ -1624,6 +1904,7 @@ Result<FrameStats> VulkanRenderer::render(world::World& world, const Camera& cam
         vkResetCommandBuffer(frame.cmd, 0);
         vkBeginCommandBuffer(frame.cmd, &begin);
         prepare_frame(world, camera, options, extent_, stats);
+        record_sky_upload(frame.cmd);
         record_shadows(frame.cmd, stats);
         record_scene(frame.cmd, offscreen_.image, offscreen_.view, extent_, options, stats);
         image_barrier(frame.cmd, offscreen_.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
@@ -1686,6 +1967,7 @@ Result<FrameStats> VulkanRenderer::render(world::World& world, const Camera& cam
 
     const VkExtent2D scene_extent = ui_ ? viewport_extent_ : extent_;
     prepare_frame(world, camera, options, scene_extent, stats);
+    record_sky_upload(frame.cmd);
     record_shadows(frame.cmd, stats);
     if (!ui_) {
         record_scene(frame.cmd, swap_images_[image], swap_views_[image], extent_, options, stats);
@@ -1797,8 +2079,19 @@ VulkanRenderer::~VulkanRenderer() {
             if (t.image) vkDestroyImage(device_, t.image, nullptr);
             if (t.memory) vkFreeMemory(device_, t.memory, nullptr);
         }
-        destroy_image(shadow_map_);
-        for (Frame& f : frames_) destroy_buffer(f.uniforms);
+        for (VkImageView v : shadow_layer_views_)
+            if (v) vkDestroyImageView(device_, v, nullptr);
+        if (shadow_array_view_) vkDestroyImageView(device_, shadow_array_view_, nullptr);
+        if (shadow_image_) vkDestroyImage(device_, shadow_image_, nullptr);
+        if (shadow_memory_) vkFreeMemory(device_, shadow_memory_, nullptr);
+        if (sky_view_) vkDestroyImageView(device_, sky_view_, nullptr);
+        if (sky_image_) vkDestroyImage(device_, sky_image_, nullptr);
+        if (sky_memory_) vkFreeMemory(device_, sky_memory_, nullptr);
+        if (sky_sampler_) vkDestroySampler(device_, sky_sampler_, nullptr);
+        for (Frame& f : frames_) {
+            destroy_buffer(f.uniforms);
+            destroy_buffer(f.sky_staging);
+        }
         if (descriptor_pool_) vkDestroyDescriptorPool(device_, descriptor_pool_, nullptr);
         if (texture_sampler_) vkDestroySampler(device_, texture_sampler_, nullptr);
         if (shadow_sampler_) vkDestroySampler(device_, shadow_sampler_, nullptr);
@@ -1808,6 +2101,7 @@ VulkanRenderer::~VulkanRenderer() {
         if (pipeline_) vkDestroyPipeline(device_, pipeline_, nullptr);
         if (grid_pipeline_) vkDestroyPipeline(device_, grid_pipeline_, nullptr);
         if (shadow_pipeline_) vkDestroyPipeline(device_, shadow_pipeline_, nullptr);
+        if (sky_pipeline_) vkDestroyPipeline(device_, sky_pipeline_, nullptr);
         if (layout_) vkDestroyPipelineLayout(device_, layout_, nullptr);
         for (Frame& f : frames_) {
             if (f.fence) vkDestroyFence(device_, f.fence, nullptr);

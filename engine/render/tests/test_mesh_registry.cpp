@@ -1,6 +1,8 @@
+#include <cstdio>
 #include "aether/render/mesh_registry.hpp"
 #include "aether/render/light.hpp"
 #include "aether/render/model_library.hpp"
+#include "aether/render/sky.hpp"
 #include "aether_test.hpp"
 
 using namespace aether;
@@ -182,4 +184,89 @@ AETHER_TEST(rotation_toward_aims_local_minus_z) {
         const math::Vec3 got = math::rotate(rotation_toward(d), math::Vec3{0, 0, -1});
         CHECK(math::near(got, math::normalize(d)));
     }
+}
+
+AETHER_TEST(environment_round_trips_and_rejects_bad_values) {
+    MeshRegistry meshes;
+    world::SerializerRegistry reg;
+    register_components(reg, meshes);
+    world::World a({.seed = 1});
+    const world::Entity e = a.create();
+    Environment env;
+    env.sky_color = {0.1f, 0.2f, 0.3f};
+    env.horizon_color = {0.4f, 0.5f, 0.6f};
+    env.ground_color = {0.05f, 0.04f, 0.03f};
+    env.ambient_intensity = 1.5f;
+    env.exposure = 2.0f;
+    env.shadows = false;
+    env.sky_visible = true;
+    a.add<Environment>(e, env);
+    const Json doc = world::save_level(a, reg);
+    world::World b({.seed = 2});
+    REQUIRE(world::load_level(doc, b, reg).has_value());
+    const Environment* got = b.get<Environment>(b.find(a.id_of(e)));
+    REQUIRE(got != nullptr);
+    CHECK(*got == env);
+
+    for (const char* bad : {R"({"Environment": {"exposure": 0}})", R"({"Environment": {"sky": [-1, 0, 0]}})",
+                            R"({"Environment": {"sky_visible": 1}})"}) {
+        auto parsed = parse_json(std::string(R"({"format": "aether.level", "version": 1, "entities": [
+            {"id": "00000000-0000-4000-8000-000000000001", "components": )") + bad + "}]}");
+        REQUIRE(parsed.has_value());
+        world::World w({.seed = 1});
+        auto r = world::load_level(parsed.value(), w, reg);
+        REQUIRE(r.has_value());
+        CHECK_EQ(r.value().warnings.size(), std::size_t{1});
+    }
+}
+
+AETHER_TEST(half_floats_round_trip) {
+    for (const float v : {0.0f, 1.0f, -2.5f, 0.1f, 1000.0f, 65504.0f, 6.1e-5f, 1e-7f}) {
+        const float back = half_to_float(float_to_half(v));
+        CHECK(std::abs(back - v) <= std::abs(v) * 0.001f + 1e-7f);
+    }
+    CHECK_EQ(float_to_half(1.0f), std::uint16_t{0x3C00});
+    CHECK_EQ(float_to_half(-2.0f), std::uint16_t{0xC000});
+    CHECK_EQ(float_to_half(1e9f), std::uint16_t{0x7C00});  // overflow -> infinity
+    CHECK(half_to_float(0x0001) > 0.0f);                   // smallest subnormal
+}
+
+AETHER_TEST(sky_bake_of_a_uniform_sky_is_uniform) {
+    Environment env;
+    env.sky_color = env.horizon_color = env.ground_color = {0.5f, 0.25f, 1.0f};
+    env.ambient_intensity = 2.0f;
+    const SkyBake bake = bake_sky(env, 8, 4);
+    CHECK_EQ(bake.cube.size(), std::size_t{6 * (64 + 16 + 4 + 1) * 4});
+    for (std::size_t i = 0; i < bake.cube.size(); i += 4) {
+        CHECK(std::abs(half_to_float(bake.cube[i]) - 1.0f) < 0.01f);
+        CHECK(std::abs(half_to_float(bake.cube[i + 1]) - 0.5f) < 0.01f);
+        CHECK(std::abs(half_to_float(bake.cube[i + 2]) - 2.0f) < 0.01f);
+    }
+    // Irradiance / pi of a uniform sky is the sky itself: only the constant term.
+    CHECK(std::abs(bake.irradiance[0].x - 1.0f) < 0.01f && std::abs(bake.irradiance[0].z - 2.0f) < 0.02f);
+    for (std::size_t k = 1; k < 9; ++k) CHECK(math::length(bake.irradiance[k]) < 0.01f);
+}
+
+AETHER_TEST(sky_bake_is_brighter_above_and_blurs_with_roughness) {
+    Environment env;  // blue above, dark ground
+    const SkyBake bake = bake_sky(env, 16, 5);
+    // Irradiance: the y coefficient is positive (more light from above).
+    CHECK(bake.irradiance[1].z > 0.05f);
+    // Mip 0: +Y face is the zenith colour, -Y the ground colour.
+    const std::size_t face = std::size_t{16} * 16 * 4;
+    const std::size_t centre = (std::size_t{8} * 16 + 8) * 4;
+    CHECK(std::abs(half_to_float(bake.cube[2 * face + centre + 2]) - env.sky_color.z) < 0.03f);
+    CHECK(std::abs(half_to_float(bake.cube[3 * face + centre]) - env.ground_color.x) < 0.01f);
+    // Last mip (roughness 1, one texel per face): the sideways face blends
+    // sky and ground, so it is darker than the sharp horizon in mip 0.
+    const std::size_t last = bake.cube.size() - 6 * 4;
+    const float blurred = half_to_float(bake.cube[last + 2]);  // +X, blue channel
+    CHECK(blurred > env.ground_color.z + 0.05f);
+    const float sharp = half_to_float(bake.cube[(std::size_t{7} * 16 + 8) * 4 + 2]);  // +X, just above the horizon
+    std::printf("    +X blue: sharp %.3f, fully rough %.3f\n", static_cast<double>(sharp), static_cast<double>(blurred));
+    CHECK(blurred < sharp - 0.05f);
+    // Cube face directions follow the Vulkan convention.
+    CHECK(cube_direction(0, 0, 0) == (math::Vec3{1, 0, 0}));
+    CHECK(cube_direction(2, 0, 0) == (math::Vec3{0, 1, 0}));
+    CHECK(cube_direction(4, 1, 1) == (math::Vec3{1, -1, 1}));
 }

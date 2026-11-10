@@ -1,5 +1,7 @@
 #include "aether/render/mesh_registry.hpp"
 
+#include <utility>
+
 #include "aether/render/light.hpp"
 
 namespace aether::render {
@@ -164,6 +166,50 @@ void register_components(world::SerializerRegistry& registry, const MeshRegistry
                 light.cast_shadows = shadows->as_bool();
             }
             return light;
+        });
+
+    registry.add<Environment>(
+        [](const Environment& env) {
+            Json j = Json::object();
+            j.set("sky", world::json_io::from_vec3(env.sky_color));
+            j.set("horizon", world::json_io::from_vec3(env.horizon_color));
+            j.set("ground", world::json_io::from_vec3(env.ground_color));
+            j.set("intensity", world::json_io::from_float(env.ambient_intensity));
+            j.set("exposure", world::json_io::from_float(env.exposure));
+            j.set("shadows", env.shadows);
+            j.set("sky_visible", env.sky_visible);
+            return j;
+        },
+        [](const Json& j) -> Result<Environment> {
+            if (!j.is_object()) return Error{ErrorCode::InvalidArgument, "Environment must be an object"};
+            Environment env;
+            const auto color = [&](std::string_view key, math::Vec3& out) -> Result<void> {
+                auto v = world::json_io::read_vec3(j, key, out);
+                if (!v) return v.error();
+                if (v.value().x < 0 || v.value().y < 0 || v.value().z < 0)
+                    return Error{ErrorCode::InvalidArgument, "\"" + std::string(key) + "\" must not be negative"};
+                out = v.value();
+                return ok();
+            };
+            if (auto r = color("sky", env.sky_color); !r) return r.error();
+            if (auto r = color("horizon", env.horizon_color); !r) return r.error();
+            if (auto r = color("ground", env.ground_color); !r) return r.error();
+            auto intensity = world::json_io::read_number(j, "intensity", env.ambient_intensity);
+            if (!intensity) return intensity.error();
+            auto exposure = world::json_io::read_number(j, "exposure", env.exposure);
+            if (!exposure) return exposure.error();
+            if (intensity.value() < 0 || !(exposure.value() > 0))
+                return Error{ErrorCode::InvalidArgument, "Environment intensity must be >= 0 and exposure > 0"};
+            env.ambient_intensity = static_cast<float>(intensity.value());
+            env.exposure = static_cast<float>(exposure.value());
+            for (const auto& [key, field] : {std::pair<const char*, bool*>{"shadows", &env.shadows},
+                                             std::pair<const char*, bool*>{"sky_visible", &env.sky_visible}}) {
+                if (const Json* v = j.find(key)) {
+                    if (!v->is_bool()) return Error{ErrorCode::InvalidArgument, "\"" + std::string(key) + "\" must be true or false"};
+                    *field = v->as_bool();
+                }
+            }
+            return env;
         });
 }
 
