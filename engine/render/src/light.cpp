@@ -5,6 +5,15 @@
 
 namespace aether::render {
 
+math::Vec3 sky_radiance(const Environment& env, math::Vec3 dir) noexcept {
+    // Keep in sync with sky_gradient() in shaders/common.glsl.
+    const auto mix = [](math::Vec3 a, math::Vec3 b, float t) { return a * (1.0f - t) + b * t; };
+    const float y = std::clamp(dir.y, -1.0f, 1.0f);
+    if (y >= 0.0f) return mix(env.horizon_color, env.sky_color, std::sqrt(y));
+    const float t = std::clamp(-y / 0.12f, 0.0f, 1.0f);
+    return mix(env.horizon_color, env.ground_color, t * t * (3.0f - 2.0f * t));
+}
+
 math::Quat rotation_toward(math::Vec3 direction) noexcept {
     const float len = math::length(direction);
     if (!(len > 0)) return math::Quat{};

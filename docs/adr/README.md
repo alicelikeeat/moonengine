@@ -17,3 +17,4 @@ An ADR records one significant decision, its context and its consequences. ADRs 
 | 0011 | [JSON level files with per-module component serializers](0011-json-level-format.md) | Accepted |
 | 0012 | [glTF 2.0 import and a content-path model library](0012-gltf-import-and-model-library.md) | Accepted |
 | 0013 | [Metallic-roughness PBR, light components and a sun shadow map](0013-pbr-lights-and-shadows.md) | Accepted |
+| 0014 | [Analytic sky, CPU-baked sky lighting and cascaded sun shadows](0014-sky-ibl-and-cascaded-shadows.md) | Accepted |

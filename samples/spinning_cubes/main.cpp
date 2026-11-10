@@ -93,6 +93,11 @@ void build_scene(World& w, render::MeshId cube) {
     day.type = render::LightType::Directional;
     day.intensity = 1.2f;
     w.add<render::Light>(daylight, day);
+    // A visible sky that also lights the scene and shows in reflections.
+    const Entity sky = w.create();
+    render::Environment env;
+    env.sky_visible = true;
+    w.add<render::Environment>(sky, env);
     const Vec3 palette[] = {{0.3f, 0.6f, 1.0f}, {0.4f, 0.9f, 0.5f}, {0.9f, 0.35f, 0.4f},
                             {0.7f, 0.5f, 1.0f}, {0.2f, 0.85f, 0.85f}, {0.95f, 0.6f, 0.3f}};
     for (int i = 0; i < 6; ++i) {

@@ -31,6 +31,30 @@ struct Light {
     bool cast_shadows = true;   // directional lights only (for now)
 };
 
+// Sky and image-wide settings. Put it on one entity of the level (the first
+// one found is used); without one, RenderOptions::environment applies.
+//
+// The sky is a gradient: `sky_color` at the zenith, `horizon_color` at the
+// horizon, `ground_color` below. It lights the scene from all directions
+// (diffuse and reflections) and, when `sky_visible`, is drawn behind the
+// scene together with the sun's disc.
+struct Environment {
+    static constexpr std::string_view kComponentName = "Environment";
+    math::Vec3 sky_color{0.20f, 0.36f, 0.72f};      // linear RGB
+    math::Vec3 horizon_color{0.62f, 0.72f, 0.86f};
+    math::Vec3 ground_color{0.16f, 0.14f, 0.12f};
+    float ambient_intensity = 1.0f;  // brightness of the sky as a light and as a background
+    float exposure = 1.0f;           // applied before ACES tone mapping
+    bool shadows = true;             // sun shadows on/off
+    bool sky_visible = false;        // draw the sky instead of the clear colour
+
+    bool operator==(const Environment&) const noexcept = default;
+};
+
+// Radiance of the Environment's sky toward unit direction `dir` (without the
+// sun, before ambient_intensity). The sky shader computes the same.
+[[nodiscard]] math::Vec3 sky_radiance(const Environment& env, math::Vec3 dir) noexcept;
+
 // Rotation that makes an entity's local -Z point along `direction` (for
 // aiming directional lights). `direction` need not be normalised.
 [[nodiscard]] math::Quat rotation_toward(math::Vec3 direction) noexcept;

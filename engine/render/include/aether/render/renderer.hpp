@@ -51,20 +51,10 @@ struct RendererDesc {
     bool enable_ui = false;
 };
 
-// Image-wide lighting not tied to an entity.
-struct Environment {
-    // Ambient light from above and below (a hemisphere "sky light"); also
-    // what metals reflect, since there is no environment map yet.
-    math::Vec3 sky_color{0.42f, 0.52f, 0.68f};
-    math::Vec3 ground_color{0.16f, 0.14f, 0.12f};
-    float ambient_intensity = 1.0f;
-    float exposure = 1.0f;  // applied before ACES tone mapping
-    bool shadows = true;    // directional shadow map on/off
-};
-
 struct RenderOptions {
     world::Entity highlight = world::kNullEntity;  // drawn with the selection tint
     bool grid = false;                             // ground grid on the XZ plane
+    // Used when the world has no entity with an Environment component.
     Environment environment;
 };
 
@@ -77,9 +67,10 @@ struct GpuInfo {
 
 struct FrameStats {
     std::uint32_t draws = 0;          // scene draws (not counting the shadow pass)
-    std::uint32_t shadow_draws = 0;   // draws into the shadow map
+    std::uint32_t shadow_draws = 0;   // draws into the shadow cascades
     std::uint32_t point_lights = 0;   // point lights used this frame
-    bool sun_shadows = false;         // a directional shadow map was rendered
+    bool sun_shadows = false;         // sun shadow cascades were rendered
+    bool sky = false;                 // the sky was drawn as the background
     bool presented = false;  // false when skipped (minimised, swapchain rebuilt)
 };
 

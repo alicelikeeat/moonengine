@@ -57,6 +57,8 @@ private:
 //     component's load (the loader keeps the data and warns).
 //   Light: {"type": "directional" | "point", "color": [r, g, b],
 //           "intensity": i, "range": r (point), "shadows": bool (directional)}
+//   Environment: {"sky": [r, g, b], "horizon": [...], "ground": [...],
+//                 "intensity": i, "exposure": e, "shadows": bool, "sky_visible": bool}
 void register_components(world::SerializerRegistry& registry, const MeshRegistry& meshes);
 
 }  // namespace aether::render

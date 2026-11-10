@@ -5,6 +5,7 @@ aether_add_module(render
         src/mesh.cpp
         src/mesh_registry.cpp
         src/model_library.cpp
+        src/sky.cpp
         src/vulkan_renderer.cpp
     DEPENDS
         foundation

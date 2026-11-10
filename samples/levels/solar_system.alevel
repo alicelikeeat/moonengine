@@ -845,6 +845,28 @@
           "shadows": true
         }
       }
+    },
+    {
+      "id": "f4850a10-580c-40dd-9885-a97420d1e9f9",
+      "components": {
+        "Name": {
+          "value": "Environment"
+        },
+        "Transform": {
+          "position": [0, 0, 0],
+          "rotation": [0, 0, 0, 1],
+          "scale": [1, 1, 1]
+        },
+        "Environment": {
+          "sky": [0.2, 0.36, 0.72],
+          "horizon": [0.62, 0.72, 0.86],
+          "ground": [0.16, 0.14, 0.12],
+          "intensity": 1,
+          "exposure": 1,
+          "shadows": true,
+          "sky_visible": true
+        }
+      }
     }
   ]
 }

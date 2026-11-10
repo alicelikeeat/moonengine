@@ -1,8 +1,9 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 // Scene fragment shader: metallic-roughness PBR (GGX specular, Lambert
-// diffuse), one directional light with a shadow map, up to 16 point lights,
-// hemisphere ambient light, ACES tone mapping.
+// diffuse), one directional light with cascaded shadow maps, up to 16 point
+// lights, image-based lighting from the sky (spherical-harmonic irradiance
+// and a prefiltered cube map), ACES tone mapping.
 
 #include "common.glsl"
 
@@ -12,7 +13,8 @@ layout(location = 2) in vec2 v_uv;
 layout(location = 3) in vec4 v_tangent;
 
 layout(set = 0, binding = 0) uniform sampler2D textures[1024];
-layout(set = 0, binding = 2) uniform sampler2DShadow shadow_map;
+layout(set = 0, binding = 2) uniform sampler2DArrayShadow shadow_map;
+layout(set = 0, binding = 3) uniform samplerCube sky_specular;  // mip = roughness * 5
 
 layout(location = 0) out vec4 out_color;
 
@@ -60,29 +62,37 @@ vec2 env_brdf(float roughness, float n_dot_v) {
     return vec2(-1.04, 1.04) * a004 + r.zw;
 }
 
-vec3 hemisphere(vec3 dir) {
-    return mix(frame.ground_color.rgb, frame.sky_color.rgb, clamp(dir.y * 0.5 + 0.5, 0.0, 1.0));
+// Sky irradiance / pi around n (Ramamoorthi & Hanrahan; the cosine
+// convolution is folded into the coefficients).
+vec3 sky_diffuse(vec3 n) {
+    vec3 e = frame.irradiance_sh[0].rgb;
+    e += frame.irradiance_sh[1].rgb * n.y + frame.irradiance_sh[2].rgb * n.z + frame.irradiance_sh[3].rgb * n.x;
+    e += frame.irradiance_sh[4].rgb * (n.x * n.y) + frame.irradiance_sh[5].rgb * (n.y * n.z);
+    e += frame.irradiance_sh[6].rgb * (3.0 * n.z * n.z - 1.0);
+    e += frame.irradiance_sh[7].rgb * (n.x * n.z) + frame.irradiance_sh[8].rgb * (n.x * n.x - n.y * n.y);
+    return max(e, vec3(0.0));
 }
 
 float sun_visibility(vec3 n, vec3 l) {
     if (frame.sun_direction.w < 0.5) return 1.0;
+    const float view_depth = dot(v_world - frame.camera_position.xyz, frame.camera_forward.xyz);
+    const int cascade = view_depth < frame.cascade_splits.x ? 0 : (view_depth < frame.cascade_splits.y ? 1 : 2);
+    if (view_depth >= frame.cascade_splits.z) return 1.0;
     // Normal offset (more at grazing angles) plus a constant depth bias.
     const float slope = 1.0 - clamp(dot(n, l), 0.0, 1.0);
-    const vec3 p = v_world + n * frame.shadow_params.y * (1.0 + 2.0 * slope);
-    const vec4 clip = frame.light_view_proj * vec4(p, 1.0);
-    const vec3 c = clip.xyz / clip.w;
-    const vec2 uv = c.xy * 0.5 + 0.5;
-    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || c.z > 1.0) return 1.0;
-    const float depth = c.z - frame.shadow_params.z;
+    const vec3 p = v_world + n * frame.cascade_texels[cascade] * (1.0 + 2.0 * slope);
+    const vec4 clip = frame.light_view_proj[cascade] * vec4(p, 1.0);
+    const vec2 uv = clip.xy * 0.5 + 0.5;
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || clip.z > 1.0) return 1.0;
+    const float depth = clip.z - frame.cascade_bias[cascade];
+    const float texel = 1.0 / float(textureSize(shadow_map, 0).x);
     float lit = 0.0;
     for (int y = -1; y <= 1; ++y)
         for (int x = -1; x <= 1; ++x)
-            lit += texture(shadow_map, vec3(uv + vec2(x, y) * frame.shadow_params.x, depth));
-    return lit / 9.0;
-}
-
-vec3 aces(vec3 x) {
-    return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+            lit += texture(shadow_map, vec4(uv + vec2(x, y) * texel, float(cascade), depth));
+    lit /= 9.0;
+    // Fade out at the end of the last cascade.
+    return mix(lit, 1.0, smoothstep(frame.cascade_splits.z * 0.9, frame.cascade_splits.z, view_depth));
 }
 
 void main() {
@@ -105,7 +115,7 @@ void main() {
 
     vec3 color = vec3(0.0);
     const vec3 l_sun = frame.sun_direction.xyz;
-    if (dot(frame.sun_color.rgb, frame.sun_color.rgb) > 0.0)
+    if (frame.sun_color.a > 0.5)
         color += shade(n, v, l_sun, base, metallic, roughness) * frame.sun_color.rgb * sun_visibility(n, l_sun);
 
     for (uint i = 0u; i < frame.counts.x; ++i) {
@@ -119,13 +129,14 @@ void main() {
         color += shade(n, v, to_light * inversesqrt(d2), base, metallic, roughness) * frame.points[i].color.rgb * attenuation;
     }
 
-    // Ambient: diffuse from the hemisphere around n, specular from the
-    // hemisphere around the reflection (blurred toward n when rough).
+    // Light from the sky: diffuse irradiance around n, and the prefiltered
+    // sky along the reflection for specular.
     const float n_dot_v = max(dot(n, v), 1e-4);
     const vec3 f0 = mix(vec3(0.04), base, metallic);
     const vec2 ab = env_brdf(roughness, n_dot_v);
     const vec3 r = normalize(mix(reflect(-v, n), n, roughness * roughness));
-    color += base * (1.0 - metallic) * hemisphere(n) + hemisphere(r) * (f0 * ab.x + ab.y);
+    const vec3 reflected = textureLod(sky_specular, r, roughness * 5.0).rgb;
+    color += base * (1.0 - metallic) * sky_diffuse(n) + reflected * (f0 * ab.x + ab.y);
 
     color += pc.emissive_rough.rgb;
     vec3 mapped = aces(color * frame.camera_position.w);

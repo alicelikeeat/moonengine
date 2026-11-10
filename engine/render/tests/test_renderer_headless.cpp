@@ -290,7 +290,8 @@ AETHER_TEST(headless_sun_casts_shadows) {
     auto stats = rig->renderer->render(w, cam, dark());
     REQUIRE(stats.has_value());
     CHECK(stats.value().sun_shadows);
-    CHECK_EQ(stats.value().shadow_draws, 2u);
+    // Two casters, drawn into each cascade they can touch.
+    CHECK(stats.value().shadow_draws >= 2u && stats.value().shadow_draws <= 6u);
     auto px = rig->renderer->read_pixels();
     REQUIRE(px.has_value());
     const Rgb shadowed = at(px.value(), cam, {1.5f, 0, 0});
@@ -556,4 +557,106 @@ AETHER_TEST(headless_level_with_models_loads_them_on_demand) {
     int textured = 0;
     w.each<MeshInstance>([&](Entity, MeshInstance& m) { textured += m.texture != kWhiteTexture ? 1 : 0; });
     CHECK_EQ(textured, 1);
+}
+
+AETHER_TEST(headless_shadows_reach_far_cascades) {
+    auto rig = make_rig();
+    World w({.seed = 1});
+    const Entity floor = spawn_cube(w, rig->cube, {0, -0.05f, -30}, {1, 1, 1});
+    w.get<Transform>(floor)->scale = {40, 0.1f, 100};
+    // A tall pillar about 50 m from the camera: beyond the first two cascades.
+    const Entity pillar = spawn_cube(w, rig->cube, {0, 3, -40}, {1, 1, 1});
+    w.get<Transform>(pillar)->scale = {2, 6, 2};
+    add_sun(w, {1, -1, 0}, 3.0f);
+    propagate_transforms(w);
+    Camera cam;
+    cam.position = {0, 35, -5};
+    cam.target = {0, 0, -40};
+    auto stats = rig->renderer->render(w, cam, dark());
+    REQUIRE(stats.has_value());
+    CHECK(stats.value().sun_shadows);
+    auto px = rig->renderer->read_pixels();
+    REQUIRE(px.has_value());
+    const Rgb shadowed = at(px.value(), cam, {4, 0, -40});
+    const Rgb lit = at(px.value(), cam, {-4, 0, -40});
+    std::printf("    far shadowed = %d, far lit = %d\n", shadowed.r, lit.r);
+    CHECK(lit.r > 100);
+    CHECK(shadowed.r < lit.r / 4);
+    CHECK_EQ(rig->renderer->validation_errors(), 0u);
+}
+
+AETHER_TEST(headless_sky_is_drawn_and_lights_the_scene) {
+    auto rig = make_rig();
+    World w({.seed = 1});
+    // The level's Environment component wins over the options passed in.
+    const Entity sky = w.create();
+    Environment env;
+    env.sky_color = {0.0f, 0.0f, 1.0f};
+    env.horizon_color = {0.0f, 0.0f, 1.0f};
+    env.ground_color = {1.0f, 0.0f, 0.0f};
+    env.sky_visible = true;
+    w.add<Environment>(sky, env);
+    add_sun(w, {0, -1, 0}, 0.0f);  // no direct light, and no default sun
+    // A rough white cube: its top is lit by the blue sky, its underside by the red ground.
+    const Entity cube = spawn_cube(w, rig->cube, {0, 0, 0}, {1, 1, 1});
+    w.get<MeshInstance>(cube)->roughness = 1.0f;
+    propagate_transforms(w);
+
+    Camera cam;
+    cam.position = {0, 3, 3};
+    auto stats = rig->renderer->render(w, cam, dark());  // options say "no ambient": ignored
+    REQUIRE(stats.has_value());
+    CHECK(stats.value().sky);
+    auto px = rig->renderer->read_pixels();
+    REQUIRE(px.has_value());
+    const Rgb background = pixel(px.value(), 64, 2, 2);  // looking down: the ground part of the sky
+    const Rgb top = at(px.value(), cam, {0, 0.5f, 0});
+    std::printf("    sky below horizon = (%d, %d, %d), cube top = (%d, %d, %d)\n", background.r, background.g,
+                background.b, top.r, top.g, top.b);
+    CHECK(background.r > 150 && background.b < 30);
+    CHECK(top.b > 120 && top.r < 40);
+
+    cam.position = {0, -3, 3};
+    REQUIRE(rig->renderer->render(w, cam, dark()).has_value());
+    px = rig->renderer->read_pixels();
+    REQUIRE(px.has_value());
+    const Rgb up = pixel(px.value(), 64, 2, 2);  // looking up: blue sky
+    const Rgb bottom = at(px.value(), cam, {0, -0.5f, 0});
+    std::printf("    sky above horizon = (%d, %d, %d), cube underside = (%d, %d, %d)\n", up.r, up.g, up.b, bottom.r,
+                bottom.g, bottom.b);
+    CHECK(up.b > 150 && up.r < 30);
+    CHECK(bottom.r > 120 && bottom.b < 40);
+    CHECK_EQ(rig->renderer->validation_errors(), 0u);
+}
+
+AETHER_TEST(headless_smooth_metal_reflects_the_sky) {
+    auto rig = make_rig();
+    World w({.seed = 1});
+    add_sun(w, {0, -1, 0}, 0.0f);
+    const Entity mirror = spawn_cube(w, rig->cube, {0, 0, 0}, {1, 1, 1});
+    w.get<Transform>(mirror)->scale = {4, 0.1f, 4};
+    w.get<MeshInstance>(mirror)->metallic = 1.0f;
+    w.get<MeshInstance>(mirror)->roughness = 0.0f;
+    propagate_transforms(w);
+    RenderOptions options;
+    options.environment.sky_color = {0, 1, 0};      // green zenith
+    options.environment.horizon_color = {0, 1, 0};
+    options.environment.ground_color = {1, 0, 1};
+    Camera cam;
+    cam.position = {0, 3, 3};  // sees the top face, which mirrors the sky above
+    REQUIRE(rig->renderer->render(w, cam, options).has_value());
+    auto px = rig->renderer->read_pixels();
+    REQUIRE(px.has_value());
+    const Rgb c = at(px.value(), cam, {0, 0.05f, 0});
+    std::printf("    mirror = (%d, %d, %d)\n", c.r, c.g, c.b);
+    CHECK(c.g > 150 && c.r < 30 && c.b < 30);
+
+    // Changing the environment re-bakes the reflection.
+    options.environment.sky_color = options.environment.horizon_color = {1, 0, 0};
+    REQUIRE(rig->renderer->render(w, cam, options).has_value());
+    px = rig->renderer->read_pixels();
+    REQUIRE(px.has_value());
+    const Rgb d = at(px.value(), cam, {0, 0.05f, 0});
+    CHECK(d.r > 150 && d.g < 30);
+    CHECK_EQ(rig->renderer->validation_errors(), 0u);
 }

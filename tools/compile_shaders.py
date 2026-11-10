@@ -24,6 +24,8 @@ SHADERS = [
     ("grid.vert", "kGridVertSpv"),
     ("grid.frag", "kGridFragSpv"),
     ("shadow.vert", "kShadowVertSpv"),
+    ("sky.vert", "kSkyVertSpv"),
+    ("sky.frag", "kSkyFragSpv"),
 ]
 
 
